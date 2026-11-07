@@ -20,11 +20,16 @@ public sealed class MessageParser
         if (key is null) return Reject("missing_message_id");
         var from = ILinkClient.ReadString(r, "from_user_id");
         var to = ILinkClient.ReadString(r, "to_user_id");
+        if (from == identity.BotId && to == identity.OwnerId && ILinkClient.ReadInt(r, "message_type") == 2)
+            return new(new(diagnosticKey, null, EventState.Rejected, "bot_echo"), Ignore: true);
         if (string.IsNullOrWhiteSpace(identity.OwnerId) || string.IsNullOrWhiteSpace(identity.BotId)
             || from != identity.OwnerId || to != identity.BotId) return Reject("unauthorized_identity");
         if (!string.IsNullOrEmpty(ILinkClient.ReadString(r, "group_id"))) return Reject("group_not_supported");
         if (ILinkClient.ReadInt(r, "message_type") != 1 || ILinkClient.ReadInt(r, "message_state") != 2)
             return Reject("not_completed_user_message");
+        var receivedAt = _clock.GetUtcNow();
+        var context = ILinkClient.ReadString(r, "context_token");
+        var reply = string.IsNullOrWhiteSpace(context) ? null : new ReplyContext(identity.BotId, identity.OwnerId, context, key, receivedAt);
         if (!r.TryGetProperty("item_list", out var items) || items.ValueKind != JsonValueKind.Array) return Reject("missing_items");
         List<string> texts = [];
         var missingTranscript = false;
@@ -40,14 +45,14 @@ public sealed class MessageParser
             else if (kind == 3) missingTranscript = true;
         }
         var joined = string.Join('\n', texts);
-        if (missingTranscript) return new(new(key, null, EventState.NeedsTranscript, "voice_transcript_missing"));
+        if (missingTranscript) return new(new(key, null, EventState.NeedsTranscript, "voice_transcript_missing", reply));
         if (joined.Length == 0) return Reject("no_supported_text");
         DateTimeOffset? created = null;
         if (r.TryGetProperty("create_time_ms", out var time) && time.ValueKind == JsonValueKind.Number && time.TryGetInt64(out var timestamp)
             && timestamp is >= -62135596800000L and <= 253402300799999L) created = DateTimeOffset.FromUnixTimeMilliseconds(timestamp);
-        var ev = new TextEvent(identity.BotId, key, from!, joined, created, _clock.GetUtcNow());
+        var ev = new TextEvent(identity.BotId, key, from!, joined, created, receivedAt);
         var manualOnly = joined.Length > 10000 || joined.Any(c => char.IsControl(c) && c is not '\n' and not '\r' and not '\t');
-        return new(new(key, ev, EventState.Queued, manualOnly ? "manual_only" : "ready"));
+        return new(new(key, ev, EventState.Queued, manualOnly ? "manual_only" : "ready", reply));
     }
 
     private static string? MessageId(JsonElement root)

@@ -9,6 +9,21 @@ namespace Connector.WeChat;
 
 public sealed class ILinkClient
 {
+    public async Task SendTextAsync(Connector.Core.ReplyContext context, string clientId, string text, CancellationToken ct)
+    {
+        if (_account is null || context.AccountId != _account.BotId || context.OwnerId != _account.OwnerId
+            || string.IsNullOrWhiteSpace(context.ContextToken) || string.IsNullOrWhiteSpace(clientId)
+            || clientId.Length > 128 || string.IsNullOrWhiteSpace(text) || new StringInfo(text).LengthInTextElements > 500)
+            throw new ILinkException("回复身份、会话上下文或文本无效，未发送回执。");
+        using var doc = await RequestAsync(HttpMethod.Post, _account.BaseUrl, "ilink/bot/sendmessage", new
+        {
+            msg = new { from_user_id = "", to_user_id = _account.OwnerId, client_id = clientId,
+                message_type = 2, message_state = 2, context_token = context.ContextToken,
+                item_list = new[] { new { type = 1, text_item = new { text } } } },
+            base_info = BaseInfo()
+        }, true, TimeSpan.FromSeconds(15), ct);
+        CheckBusinessResult(doc.RootElement);
+    }
     public static readonly Uri LoginBaseUrl = new("https://ilinkai.weixin.qq.com/");
     private readonly HttpClient _http;
     private readonly ProtocolMetadata _metadata;
