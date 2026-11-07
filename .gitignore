@@ -1,0 +1,11 @@
+.tools/
+.superpowers/
+**/bin/
+**/obj/
+artifacts/
+TestResults/
+*.user
+*.suo
+.vs/
+.local/
+*.dpapi
