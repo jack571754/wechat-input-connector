@@ -14,26 +14,80 @@ namespace Connector.Probe;
 
 internal static class Program
 {
+    [DllImport("user32.dll")] private static extern nint OpenInputDesktop(uint flags, bool inherit, uint access);
+    [DllImport("user32.dll")] private static extern bool SetThreadDesktop(nint desktop);
+
     [STAThread]
     private static void Main(string[] args)
     {
-        if (args.Contains("--input-helper")) { NotepadProbe.RunHelper(); return; }
-        var index = Array.IndexOf(args, "--data-dir");
-        var directory = index >= 0 && index + 1 < args.Length ? Path.GetFullPath(args[index + 1]) : Path.Combine(AppContext.BaseDirectory, ".local");
-        Directory.CreateDirectory(directory);
-        var targetIndex = Array.IndexOf(args, "--target-pid");
-        var targetPid = targetIndex >= 0 && targetIndex + 1 < args.Length && int.TryParse(args[targetIndex + 1], out var pid) ? pid : 0;
-        if (args.Contains("--insert-probe"))
+        string? directory = null;
+        try
         {
-            var result = NotepadProbe.InsertAsync("【P0 本地输入验证】中文与 emoji 🙂\r\n第二行，不自动发送。", targetPid,
-                Path.Combine(directory, "clipboard-recovery.dpapi"), default).GetAwaiter().GetResult();
-            File.WriteAllText(Path.Combine(directory, "native-input-result.json"), JsonSerializer.Serialize(result));
-            return;
+            var desk = OpenInputDesktop(0, false, 0x01FF);
+            if (desk != 0) SetThreadDesktop(desk);
+            if (args.Contains("--input-helper")) { FocusedInputProbe.RunHelper(); return; }
+            directory = ResolveDataDirectory(args);
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(Path.Combine(directory, "trace.log"), $"[Trace] Main start\n");
+            if (args.Contains("--insert-probe"))
+            {
+                var result = FocusedInputProbe.InsertAsync("【P0 本地输入验证】中文与 emoji 🙂\r\n第二行，不自动发送。",
+                    Path.Combine(directory, "input-recovery.dpapi"), default).GetAwaiter().GetResult();
+                File.WriteAllText(Path.Combine(directory, "native-input-result.json"), JsonSerializer.Serialize(result));
+                return;
+            }
+            using var single = new Mutex(true, "Local\\WeChatInputConnector.P0", out var first);
+            File.AppendAllText(Path.Combine(directory, "trace.log"), $"[Trace] Main first={first}\n");
+            if (!first) { Forms.MessageBox.Show("微信输入连接器已在运行，请查看桌面顶部或右下角系统托盘。", "微信连接器"); return; }
+            using var tray = new TrayManager();
+            var app = new System.Windows.Application();
+            app.DispatcherUnhandledException += (s, e) =>
+            {
+                File.AppendAllText(Path.Combine(directory, "crash.log"), $"[Dispatcher Exception] {e.Exception}\n");
+                e.Handled = false;
+            };
+            AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+            {
+                File.AppendAllText(Path.Combine(directory, "crash.log"), $"[AppDomain Exception] {e.ExceptionObject}\n");
+            };
+            app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
+            var window = new PillWindow(directory, tray);
+            window.Show();
+            app.Run(window);
         }
-        using var single = new Mutex(true, "Local\\WeChatInputConnector.P0", out var first);
-        if (!first) { Forms.MessageBox.Show("P0 验证窗口已在运行，请使用现有窗口。", "微信连接器"); return; }
-        ApplicationConfiguration.Initialize();
-        Forms.Application.Run(new ProbeForm(directory, targetPid));
+        catch (Exception ex)
+        {
+            var targetDir = directory ?? AppContext.BaseDirectory;
+            File.WriteAllText(Path.Combine(targetDir, "crash.log"), ex.ToString());
+        }
+    }
+
+    private static string ResolveDataDirectory(string[] args)
+    {
+        var index = Array.IndexOf(args, "--data-dir");
+        if (index >= 0 && index + 1 < args.Length)
+        {
+            return Path.GetFullPath(args[index + 1]);
+        }
+
+        var localSubdir = Path.Combine(AppContext.BaseDirectory, ".local");
+        if (File.Exists(Path.Combine(localSubdir, "probe-state.dpapi")))
+        {
+            return localSubdir;
+        }
+
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current != null)
+        {
+            var candidate = Path.Combine(current.FullName, ".local");
+            if (File.Exists(Path.Combine(candidate, "probe-state.dpapi")))
+            {
+                return candidate;
+            }
+            current = current.Parent;
+        }
+
+        return localSubdir;
     }
 }
 
@@ -58,19 +112,16 @@ internal sealed class ProbeForm : Forms.Form
     private CancellationTokenSource _session = new();
     private TaskCompletionSource<string>? _pendingCode;
     private ProbeState? _state;
-    private readonly Forms.ComboBox _targets = new() { Width = 175, DropDownStyle = Forms.ComboBoxStyle.DropDownList };
-    private readonly Forms.Button _refreshTargets = new() { Text = "刷新记事本", AutoSize = true };
-    private readonly Forms.CheckBox _automatic = new() { Text = "自动输入记事本", Checked = true, AutoSize = true };
-    private int _targetProcessId;
-    private bool _inserting;
+    private readonly Forms.CheckBox _automatic = new() { Text = "自动输入当前输入框", Checked = true, AutoSize = true };
+    private readonly InputAttemptGate _attemptGate = new();
     private bool _inputPaused;
     private string? _lastInputState;
     private string? _lastInputReason;
+    private string? _lastBackend;
 
-    internal ProbeForm(string directory, int targetPid)
+    internal ProbeForm(string directory)
     {
         _directory = directory;
-        _targetProcessId = targetPid;
         Text = "微信连接器 P0 · 接入验证";
         ClientSize = new(920, 720);
         MinimumSize = new(650, 570);
@@ -87,39 +138,36 @@ internal sealed class ProbeForm : Forms.Form
         layout.RowStyles.Add(new(Forms.SizeType.Percent, 40));
         layout.Controls.Add(_status, 0, 0); layout.SetColumnSpan(_status, 2);
         layout.Controls.Add(_qr, 0, 1);
-        var instructions = new Forms.Label { Dock = Forms.DockStyle.Fill, Text = "手机微信扫码绑定。只向指定记事本输入。\r\n\r\n选定记事本并点击文本区后，发送新的微信文字或语音。\r\n\r\n历史积压不会自动补写：在记事本按 Ctrl+Alt+V，每次插入最早一条。\r\n\r\n剪贴板含图片/富文本时保留原内容并暂停写入。" };
+        var instructions = new Forms.Label { Dock = Forms.DockStyle.Fill, Text = "手机微信扫码连接后，点击任意应用中要写入的输入框。\r\n\r\n发送新的微信文字或语音，直接写入当前光标处。\r\n\r\n如果输入框未聚焦或未写入，可点击目标输入框后按 Ctrl+Alt+V 补写，或双击列表项重新写入。\r\n\r\n不改写剪贴板，不自动点击发送。密码框或只读控件自动跳过。" };
         layout.Controls.Add(instructions, 1, 1);
         var controls = new Forms.FlowLayoutPanel { AutoSize = true, Dock = Forms.DockStyle.Fill, WrapContents = true };
-        controls.Controls.AddRange([_verify, _submit, _connect, _pause, _targets, _refreshTargets, _automatic]);
+        controls.Controls.AddRange([_verify, _submit, _connect, _pause, _automatic]);
         layout.Controls.Add(controls, 0, 2); layout.SetColumnSpan(controls, 2);
         layout.Controls.Add(_metrics, 0, 3); layout.SetColumnSpan(_metrics, 2);
         _messages.Columns.Add("time", "接收时间"); _messages.Columns.Add("state", "处理状态"); _messages.Columns.Add("length", "文字长度");
         layout.Controls.Add(_messages, 0, 4); layout.SetColumnSpan(_messages, 2);
         layout.Controls.Add(_preview, 0, 5); layout.SetColumnSpan(_preview, 2);
         Controls.Add(layout);
+        _messages.CellDoubleClick += async (_, e) =>
+        {
+            if (e.RowIndex >= 0 && e.RowIndex < _messages.Rows.Count)
+            {
+                var item = _state?.Events.ElementAtOrDefault(e.RowIndex);
+                if (item?.Event is not null)
+                {
+                    await _attemptGate.TryRunAsync(ct => InsertCoreAsync(item, manual: true, ct), _session.Token);
+                }
+            }
+        };
         _submit.Click += (_, _) => { if (_pendingCode?.TrySetResult(_verify.Text.Trim()) == true) { _verify.Clear(); _verify.Enabled = _submit.Enabled = false; } };
         _pause.Click += (_, _) => { _session.Cancel(); _status.Text = "接收已暂停，点击重新扫码可重新开始。"; WriteStatus("paused"); };
         _connect.Click += async (_, _) => await ConnectAsync(forceLogin: true);
-        _refreshTargets.Click += (_, _) => RefreshTargets();
-        _targets.SelectedIndexChanged += (_, _) => { if (_targets.SelectedItem is TargetChoice choice) _targetProcessId = choice.Id; };
-        RefreshTargets();
         Shown += async (_, _) => await ConnectAsync(forceLogin: false);
         FormClosing += (_, _) => { _session.Cancel(); _pendingCode?.TrySetCanceled(); };
         FormClosed += (_, _) => { _qr.Image?.Dispose(); _http.Dispose(); _session.Dispose(); };
     }
 
     private string VaultPath => Path.Combine(_directory, "probe-state.dpapi");
-
-    private sealed record TargetChoice(int Id, string Label) { public override string ToString() => Label; }
-    private void RefreshTargets()
-    {
-        var previous = _targetProcessId;
-        _targets.Items.Clear(); _targets.Items.Add(new TargetChoice(0, "未选择记事本"));
-        foreach (var process in Process.GetProcessesByName("Notepad"))
-            _targets.Items.Add(new TargetChoice(process.Id, $"记事本 PID {process.Id}"));
-        var match = _targets.Items.Cast<TargetChoice>().FirstOrDefault(x => x.Id == previous);
-        _targets.SelectedItem = match ?? _targets.Items[0];
-    }
 
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -138,34 +186,43 @@ internal sealed class ProbeForm : Forms.Form
 
     private async Task InsertNextAsync()
     {
-        if (_state is null || _inserting || _inputPaused) return;
-        var next = _state.Events.FirstOrDefault(x => x.State == EventState.Queued && x.Event is not null);
-        if (next?.Event is null) return;
-        for (var i = 0; i < 50 && new[] { 0x10, 0x11, 0x12 }.Any(k => (GetAsyncKeyState(k) & 0x8000) != 0); i++) await Task.Delay(20);
-        await InsertAsync(next, manual: true, _session.Token);
-    }
-
-    private async Task InsertAsync(InboxItem item, bool manual, CancellationToken ct)
-    {
-        if (_state is null || item.Event is null || _inserting || _inputPaused || _targetProcessId <= 0) return;
-        if (!manual && (!_automatic.Checked || item.ReasonCode != "ready" || item.Event.CreatedAt is null
-            || DateTimeOffset.UtcNow - item.Event.CreatedAt > TimeSpan.FromSeconds(15)
-            || item.Event.CreatedAt - DateTimeOffset.UtcNow > TimeSpan.FromSeconds(5))) return;
-        _inserting = true;
         try
         {
-            UpdateEvent(item.StorageKey, EventState.Inserting, "inserting");
-            var result = await NotepadProbe.InsertAsync(item.Event.Text, _targetProcessId, Path.Combine(_directory, "clipboard-recovery.dpapi"), ct);
+            await _attemptGate.TryRunAsync(async ct =>
+            {
+                for (var i = 0; i < 50 && new[] { 0x10, 0x11, 0x12 }.Any(k => (GetAsyncKeyState(k) & 0x8000) != 0); i++) await Task.Delay(20, ct);
+                var next = _state?.Events.FirstOrDefault(x => x.State == EventState.Queued && x.Event is not null);
+                if (next is not null) await InsertCoreAsync(next, manual: true, ct);
+            }, _session.Token);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task InsertCoreAsync(InboxItem requested, bool manual, CancellationToken ct)
+    {
+        var item = _state?.Events.FirstOrDefault(x => x.StorageKey == requested.StorageKey);
+        if (_state is null || item?.Event is null || _inputPaused) return;
+        if (!manual && (!_automatic.Checked || item.ReasonCode != "ready"
+            || (item.Event.CreatedAt is not null && DateTimeOffset.UtcNow - item.Event.CreatedAt > TimeSpan.FromMinutes(2))
+            || DateTimeOffset.UtcNow - item.Event.ReceivedAt > TimeSpan.FromSeconds(30))) return;
+        try
+        {
+            var events = ProbeInputFlow.TryBegin(_state.Events, item.StorageKey);
+            if (events is null) return;
+            var updated = _state with { Events = events.ToList() };
+            ProtectedFile.Save(VaultPath, updated);
+            _state = updated;
+            var result = await FocusedInputProbe.InsertAsync(item.Event.Text, Path.Combine(_directory, "input-recovery.dpapi"), ct);
             var state = Enum.TryParse<EventState>(result.State, out var parsed) ? parsed : EventState.Uncertain;
             UpdateEvent(item.StorageKey, state, result.Reason);
             _lastInputState = result.State; _lastInputReason = result.Reason;
-            _inputPaused = result.Clipboard == "PendingRecovery" || state == EventState.Uncertain;
+            _lastBackend = result.Backend;
+            _inputPaused = state == EventState.Uncertain;
             _status.Text = result.Reason;
             WriteStatus("connected");
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
         { _inputPaused = true; _status.Text = "写入状态无法保存，已暂停自动输入。"; }
-        finally { _inserting = false; }
     }
 
     private void UpdateEvent(string key, EventState state, string reason)
@@ -174,6 +231,14 @@ internal sealed class ProbeForm : Forms.Form
         var updated = _state with { Events = events };
         ProtectedFile.Save(VaultPath, updated);
         _state = updated;
+        for (var i = 0; i < _messages.Rows.Count; i++)
+        {
+            if (_state.Events.Count > i && _state.Events[i].StorageKey == key)
+            {
+                _messages.Rows[i].Cells[1].Value = Describe(_state.Events[i]);
+                break;
+            }
+        }
     }
 
     private async Task ConnectAsync(bool forceLogin)
@@ -190,7 +255,8 @@ internal sealed class ProbeForm : Forms.Form
             if (_state is not null)
             {
                 _state = _state with { Events = _state.Events.Select(x => x.State == EventState.Inserting ? x with { State = EventState.Uncertain } : x).ToList() };
-                _inputPaused = File.Exists(Path.Combine(_directory, "clipboard-recovery.dpapi")) || _state.Events.Any(x => x.State == EventState.Uncertain);
+                _inputPaused = File.Exists(Path.Combine(_directory, "clipboard-recovery.dpapi"))
+                    || File.Exists(Path.Combine(_directory, "input-recovery.dpapi")) || _state.Events.Any(x => x.State == EventState.Uncertain);
             }
             if (forceLogin || _state is null)
             {
@@ -202,7 +268,7 @@ internal sealed class ProbeForm : Forms.Form
                 ProtectedFile.Save(VaultPath, _state);
             }
             _qr.Image?.Dispose(); _qr.Image = null;
-            _status.Text = _targetProcessId > 0 ? "已连接；点击指定记事本文本区后发送新消息。" : "已连接，请选择测试记事本；当前仅接收消息。";
+            _status.Text = "已连接；点击要写入的输入框后，从手机发送新消息。";
             WriteStatus("connected");
             var client = new ILinkClient(_http, _metadata, _state.Account);
             try { await client.NotifyLifecycleAsync(true, token); }
@@ -265,7 +331,6 @@ internal sealed class ProbeForm : Forms.Form
                 var voices = _state.VoiceTotal;
                 var transcripts = _state.VoiceWithTranscript;
                 var fresh = new List<InboxItem>();
-                var hadBacklog = items.Any(x => x.State is EventState.Queued or EventState.Uncertain or EventState.NeedsTranscript);
                 foreach (var message in batch.Messages)
                 {
                     var parsed = parser.Parse(message, new(_state.Account.BotId, _state.Account.OwnerId)).Item;
@@ -286,12 +351,12 @@ internal sealed class ProbeForm : Forms.Form
                 {
                     _messages.Rows.Insert(0, DateTime.Now.ToString("HH:mm:ss"), Describe(item), item.Event?.Text.Length ?? 0);
                     if (item.Event is not null) _preview.Text = item.Event.Text;
-                    if (!hadBacklog && item.State == EventState.Queued && item.Event is not null)
-                    {
-                        await InsertAsync(item, manual: false, ct);
-                        if (_state.Events.Any(x => x.State is EventState.Queued or EventState.Uncertain or EventState.NeedsTranscript)) hadBacklog = true;
-                    }
                 }
+                await ProbeInputFlow.RunFreshBatchAsync(fresh, _inputPaused || !_automatic.Checked, async (item, cancellation) =>
+                {
+                    await _attemptGate.TryRunAsync(token => InsertCoreAsync(item, manual: false, token), cancellation);
+                    return _state.Events.First(x => x.StorageKey == item.StorageKey).State;
+                }, ct);
                 while (_messages.Rows.Count > 100) _messages.Rows.RemoveAt(_messages.Rows.Count - 1);
                 var accepted = items.Count(x => x.State != EventState.Rejected);
                 _metrics.Text = $"收到 {items.Count} 条唯一消息 · 身份通过 {accepted} 条 · 语音 {voices} 条，其中带转写 {transcripts} 条";
@@ -308,7 +373,13 @@ internal sealed class ProbeForm : Forms.Form
     }
 
     private static string Describe(InboxItem item) => item.State switch
-    { EventState.Queued => "已接收文字", EventState.NeedsTranscript => "语音缺少转写", _ => "已拒绝：" + item.ReasonCode };
+    {
+        EventState.Queued => "待输入",
+        EventState.Verified => "已确认写入",
+        EventState.Dispatched => "已写入",
+        EventState.NeedsTranscript => "语音缺少转写",
+        _ => "已拒绝：" + item.ReasonCode
+    };
 
     private void WriteStatus(string status, string? reason = null)
     {
@@ -317,9 +388,9 @@ internal sealed class ProbeForm : Forms.Form
             Bound = _state is not null, UniqueMessages = _state?.Events.Count ?? 0,
             AcceptedMessages = _state?.Events.Count(x => x.State != EventState.Rejected) ?? 0,
             VoiceTotal = _state?.VoiceTotal ?? 0, VoiceWithTranscript = _state?.VoiceWithTranscript ?? 0,
-            TargetPid = _targetProcessId, LastInputState = _lastInputState, LastInputReason = _lastInputReason,
+            FocusMode = "CurrentInput", LastInputState = _lastInputState, LastInputReason = _lastInputReason, Backend = _lastBackend,
             Queued = _state?.Events.Count(x => x.State == EventState.Queued) ?? 0, InputPaused = _inputPaused,
-            Verified = _state?.Events.Count(x => x.State == EventState.Verified) ?? 0 });
+            Verified = _state?.Events.Count(x => x.State is EventState.Verified or EventState.Dispatched) ?? 0 });
         var path = Path.Combine(_directory, "probe-status.json");
         File.WriteAllText(path + ".tmp", json);
         File.Move(path + ".tmp", path, overwrite: true);
