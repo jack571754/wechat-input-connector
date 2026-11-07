@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Connector.WeChat/Connector.WeChat.csproj" />
+    <ProjectReference Include="../../src/Connector.Windows/Connector.Windows.csproj" />
+    <PackageReference Include="QRCoder" />
+  </ItemGroup>
+</Project>

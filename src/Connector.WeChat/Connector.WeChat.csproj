@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Connector.Core/Connector.Core.csproj" />
+    <EmbeddedResource Include="protocol-baseline.json" />
+  </ItemGroup>
+</Project>
