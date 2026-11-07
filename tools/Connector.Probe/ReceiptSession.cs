@@ -16,6 +16,9 @@ internal sealed class ReceiptSession
     private readonly Action<string> _report;
     private long _sent;
     private long _received;
+    private long _polls;
+    private string _phase = "starting";
+    private string? _failureType;
 
     public ReceiptSession(string directory, ConnectionState state, bool autoInput, bool autoEnter,
         HttpClient http, ProtocolMetadata metadata, Action<string> report)
@@ -38,11 +41,13 @@ internal sealed class ReceiptSession
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
+            if (!Coordinator.Snapshot.Connected) throw new SessionExpiredException();
             try { await _client.NotifyLifecycleAsync(true, linked.Token); }
             catch (SessionExpiredException) { throw; }
             catch (ILinkException) { }
             catch (OperationCanceledException) when (!linked.IsCancellationRequested) { }
             PublishDiagnostic();
+            _phase = "receiving";
             var receive = ReceiveAsync(linked.Token);
             var send = ReceiptPump.RunAsync(Coordinator, SendAsync, linked.Token, PublishDiagnostic);
             await Task.WhenAny(receive, send);
@@ -50,6 +55,14 @@ internal sealed class ReceiptSession
             try { await Task.WhenAll(receive, send); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested && !Coordinator.Snapshot.Connected) { }
             if (!Coordinator.Snapshot.Connected) throw new SessionExpiredException();
+        }
+        catch (SessionExpiredException)
+        {
+            Coordinator.MarkSessionExpired(); PublishDiagnostic(); throw;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _failureType = error.GetType().Name; PublishDiagnostic(); throw;
         }
         finally { linked.Cancel(); }
     }
@@ -61,17 +74,25 @@ internal sealed class ReceiptSession
         {
             ct.ThrowIfCancellationRequested();
             PollBatch batch;
-            try { batch = await _client.GetUpdatesAsync(Coordinator.Snapshot.Cursor, ct); failures = 0; }
-            catch (SessionExpiredException) { throw; }
-            catch (ILinkException)
+            try
             {
+                _phase = "polling";
+                batch = await _client.GetUpdatesAsync(Coordinator.Snapshot.Cursor, ct);
+                failures = 0; _polls++; _failureType = null;
+            }
+            catch (SessionExpiredException) { throw; }
+            catch (ILinkException error)
+            {
+                _failureType = error.GetType().Name; _phase = "retrying"; PublishDiagnostic();
                 _report("微信连接暂时中断，正在退避重连。");
                 await Task.Delay(TimeSpan.FromSeconds(Math.Min(30, 2 << Math.Min(failures++, 4))), ct);
                 continue;
             }
-            if (batch.Messages.Count == 0 && (string.IsNullOrEmpty(batch.NextCursor) || batch.NextCursor == Coordinator.Snapshot.Cursor)) continue;
+            if (batch.Messages.Count == 0 && (string.IsNullOrEmpty(batch.NextCursor) || batch.NextCursor == Coordinator.Snapshot.Cursor)) { PublishDiagnostic(); continue; }
+            _phase = "parsing";
             var items = batch.Messages.Select(x => parser.Parse(x, new(_persisted.Account.BotId, _persisted.Account.OwnerId)))
                 .Where(x => !x.Ignore).Select(x => x.Item).ToArray();
+            _phase = "committing";
             var fresh = Coordinator.CommitBatch(batch.NextCursor, items);
             _received += fresh.Count;
             foreach (var item in fresh)
@@ -87,10 +108,15 @@ internal sealed class ReceiptSession
 
     public async Task InsertNextAsync(CancellationToken ct)
     {
-        var next = Coordinator.Snapshot.Events.FirstOrDefault(x => x.State == EventState.Queued && x.Event is not null);
-        if (next is null) { _report("暂无待输入文字。"); return; }
-        await Coordinator.ProcessAsync(next.StorageKey, WriteAsync, true, ct);
-        ReportInput(next.StorageKey); PublishDiagnostic();
+        var key = await Coordinator.ProcessNextAsync(WriteAsync, ct);
+        if (key is null) { _report("暂无待输入文字。"); return; }
+        ReportInput(key); PublishDiagnostic();
+    }
+
+    public void ReviewAndResume()
+    {
+        Coordinator.AcknowledgeUncertain(() => InputRecovery.ClearReviewed(_directory));
+        PublishDiagnostic();
     }
 
     private async Task<InputOutcome> WriteAsync(TextEvent item, CancellationToken ct)
@@ -120,7 +146,8 @@ internal sealed class ReceiptSession
             Bound = true, FocusMode = "CurrentInput", UniqueMessages = state.Events.Count, ReceivedThisRun = _received,
             Queued = state.Events.Count(x => x.State == EventState.Queued), Verified = state.Events.Count(x => x.State == EventState.Verified),
             Dispatched = state.Events.Count(x => x.State == EventState.Dispatched), state.InputPaused, state.AutoInput, state.AutoEnter,
-            PendingReceipts = state.Pending.Count, SentReceiptsThisRun = _sent, SkippedReceipts = state.Skipped });
+            PendingReceipts = state.Pending.Count, SentReceiptsThisRun = _sent, SkippedReceipts = state.Skipped,
+            Phase = _phase, CompletedPolls = _polls, FailureType = _failureType });
         try
         {
             var path = Path.Combine(_directory, "probe-status.json");

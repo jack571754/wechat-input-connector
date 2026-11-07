@@ -9,8 +9,7 @@ public static class ProbePolicies
     public static bool IsDirectEditTarget(string className, int processId, int allowedProcessId)
         => processId > 0 && processId == allowedProcessId && (className.Equals("Edit", StringComparison.OrdinalIgnoreCase)
             || className.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase));
-    public static bool IsSafeText(string text) => text.Length is > 0 and <= 10000
-        && !text.Any(c => char.IsControl(c) && c is not '\r' and not '\n' and not '\t');
+    public static bool IsSafeText(string text) => Connector.Core.TextPayload.IsSafe(text);
     public static bool CanInsert(TargetObservation t) => t.ForegroundProcessId > 0 && t.FocusedProcessId > 0
         && t.IsBoundToForeground && !t.IsPassword && t.IsEnabled && !t.IsReadOnly && !t.HasSelection
         && !t.ModifiersDown && !t.ImeComposing && t.OnInteractiveDesktop && t.HasTarget;

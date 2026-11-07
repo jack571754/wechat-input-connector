@@ -344,7 +344,7 @@ internal sealed class PillWindow : Window
 
         _tray.ReviewedInputRequested += () => UpdateRuntime(() =>
         {
-            _live?.Coordinator.AcknowledgeUncertain();
+            _live?.ReviewAndResume();
             _live?.PublishDiagnostic();
             SetStatus(_live?.Coordinator.Snapshot.InputPaused == true ? "仍处于暂停状态，请先处理回执队列。" : "已解除异常暂停，历史内容不会自动补写。", YellowBrush);
         });
@@ -502,6 +502,10 @@ internal sealed class PillWindow : Window
     private void UpdateRuntime(Action action)
     {
         try { action(); }
+        catch (LegacyClipboardRecoveryException)
+        {
+            SetStatus("存在旧版剪贴板恢复记录，需先处理；已保持暂停。", YellowBrush);
+        }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
         {
             _session.Cancel();

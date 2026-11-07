@@ -181,6 +181,53 @@ public sealed class ReceiptCoordinatorTests
     }
 
     [Fact]
+    public void CompletedHistoryDoesNotPermanentlyDisableNewMessagesOrStatusQuery()
+    {
+        var history = Enumerable.Range(0, 500).Select(i => Item($"old{i}") with { State = EventState.Verified }).ToArray();
+        var c = Create(new(null, history, []));
+        c.CommitBatch("new", [Item("normal"), Item("query", "/状态")]);
+        Assert.Contains(c.Snapshot.Events, x => x.StorageKey == "normal"); Assert.True(c.TakeDue()!.Query);
+    }
+
+    [Fact]
+    public async Task InvalidHeadDoesNotPermanentlyBlockManualReplayOfNextMessage()
+    {
+        var c = Create(); c.CommitBatch(null, [Item("bad", new string('字', 10001)), Item("good", "正常文字")]);
+        var ids = new List<string>();
+        var key = await c.ProcessNextAsync((item, _) => { ids.Add(item.MessageId); return Verified(item, default); }, default);
+        Assert.Equal("good", key); Assert.Equal(new[] { "good" }, ids);
+        Assert.Equal(EventState.Rejected, c.Snapshot.Events.First(x => x.StorageKey == "bad").State);
+        Assert.Equal("正常文字", c.Snapshot.Events.First(x => x.StorageKey == "good").Event!.Text);
+    }
+
+    [Fact]
+    public async Task SessionExpiryIsNotLostWhenInflightReceiptWasPruned()
+    {
+        var c = Create(); c.CommitBatch(null, [Item()]); await c.ProcessAsync("m1", Verified, false, default);
+        var receipt = c.TakeDue()!; _clock.Advance(301); c.CommitBatch("new", [Item("m2")]);
+        Assert.Empty(c.Snapshot.Pending); c.CompleteSend(receipt.Id, ReceiptDelivery.SessionExpired);
+        Assert.False(c.Snapshot.Connected); Assert.True(c.Snapshot.InputPaused); Assert.Null(c.Snapshot.LastContext);
+    }
+
+    [Fact]
+    public void ReceiveSideSessionExpiryAlsoBlocksInputAndClearsReplyContext()
+    {
+        var c = Create(); c.CommitBatch(null, [Item()]); c.MarkSessionExpired();
+        Assert.False(c.Snapshot.Connected); Assert.True(c.Snapshot.InputPaused); Assert.Null(c.Snapshot.LastContext);
+    }
+
+    [Fact]
+    public void RecoveryBarrierMustBeClearedBeforeResumeIsCommitted()
+    {
+        var c = Create(new(null, [Item() with { State = EventState.Uncertain }], [], InputPaused: true));
+        Assert.Throws<IOException>(() => c.AcknowledgeUncertain(() => throw new IOException()));
+        Assert.True(c.Snapshot.InputPaused);
+        var cleared = false; c.AcknowledgeUncertain(() => cleared = true);
+        Assert.True(cleared); Assert.False(c.Snapshot.InputPaused);
+        Assert.Equal(EventState.Discarded, c.Snapshot.Events.Single().State);
+    }
+
+    [Fact]
     public void RestartDoesNotExceedRetryLimitForFinalInFlightAttempt()
     {
         var reply = Item().Reply!;

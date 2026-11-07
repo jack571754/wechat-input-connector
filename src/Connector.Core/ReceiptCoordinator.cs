@@ -5,6 +5,27 @@ namespace Connector.Core;
 
 public sealed class ReceiptCoordinator
 {
+    public async Task<string?> ProcessNextAsync(Func<TextEvent, CancellationToken, Task<InputOutcome>> writer, CancellationToken ct)
+    {
+        string? last = null;
+        while (true)
+        {
+            var next = Snapshot.Events.FirstOrDefault(x => x.State == EventState.Queued && x.Event is not null);
+            if (next is null) return last;
+            await ProcessAsync(next.StorageKey, writer, true, ct);
+            last = next.StorageKey;
+            if (Snapshot.Events.First(x => x.StorageKey == last).State != EventState.Rejected) return last;
+        }
+    }
+    public void MarkSessionExpired()
+    {
+        lock (_sync)
+        {
+            if (!_state.Connected) return;
+            Commit(_state with { Pending = [], LastContext = null, Connected = false, InputPaused = true,
+                Events = _state.Events.Select(x => x with { Reply = null }).ToArray(), Skipped = _state.Skipped + _state.Pending.Count });
+        }
+    }
     private readonly object _sync = new();
     private readonly SemaphoreSlim _input = new(1, 1);
     private readonly SemaphoreSlim _changed = new(0, 1);
@@ -55,7 +76,6 @@ public sealed class ReceiptCoordinator
                 if (item.ReasonCode == "bot_echo" || item.Reply is not null && (!IdentityMatches(item.Reply) || item.Reply.SourceMessageId != item.StorageKey)
                     || item.Event is not null && (item.Event.AccountId != _identity.BotId || item.Event.SenderId != _identity.OwnerId)) continue;
                 if (!keys.Add(item.StorageKey)) continue;
-                if (next.Events.Count >= 500) throw new InvalidOperationException("收件箱已满，接收已暂停。");
                 next = next with { Events = next.Events.Append(item).ToArray(), Connected = true };
                 if (Fresh(item.Reply)) next = next with { LastContext = item.Reply };
                 if (item.Event?.Text.Trim() == "/状态")
@@ -84,6 +104,12 @@ public sealed class ReceiptCoordinator
                 var found = _state.Events.FirstOrDefault(x => x.StorageKey == key);
                 if (found?.State != EventState.Queued || found.Event is null) return;
                 item = found;
+                if (!TextPayload.IsSafe(item.Event!.Text))
+                {
+                    item = item with { State = EventState.Rejected, ReasonCode = "invalid_text" };
+                    Commit(ReceiptFor(Replace(_state, item), item, new(EventState.Rejected, InputFailure.InvalidText)));
+                    return;
+                }
                 var failure = _state.InputPaused || !manual && !_state.AutoInput ? InputFailure.Paused
                     : _state.Pending.Count(x => !x.Query) >= 99 ? InputFailure.QueueFull
                     : !manual && (item.ReasonCode != "ready" || item.Event.CreatedAt is null
@@ -147,11 +173,12 @@ public sealed class ReceiptCoordinator
         }
     }
     public void SetAutoEnter(bool enabled) { lock (_sync) { if (_state.AutoEnter != enabled) Commit(_state with { AutoEnter = enabled }); } }
-    public void AcknowledgeUncertain()
+    public void AcknowledgeUncertain(Action? clearRecovery = null)
     {
         lock (_sync)
         {
             if (!_state.InputPaused || _state.Pending.Count(x => !x.Query) >= 99) return;
+            clearRecovery?.Invoke();
             var next = _state with { InputPaused = false,
                 Events = _state.Events.Select(x => x.State == EventState.Uncertain ? x with { State = EventState.Discarded, ReasonCode = "user_checked" } : x).ToArray() };
             Commit(Enqueue(next, next.LastContext, "resume:" + Guid.NewGuid(), next.AutoInput
@@ -193,17 +220,13 @@ public sealed class ReceiptCoordinator
 
     public void CompleteSend(string id, ReceiptDelivery delivery)
     {
+        // 失效属于整个会话，即使该回执刚被过期清理也必须停止收发。
+        if (delivery == ReceiptDelivery.SessionExpired) { MarkSessionExpired(); return; }
         lock (_sync)
         {
             var current = _state.Pending.FirstOrDefault(x => x.Id == id && x.Sending);
             if (current is null) return;
             var pending = _state.Pending.Where(x => x.Id != id).ToList(); var skipped = _state.Skipped;
-            if (delivery == ReceiptDelivery.SessionExpired)
-            {
-                Commit(_state with { Pending = [], LastContext = null, Connected = false, InputPaused = true,
-                    Events = _state.Events.Select(x => x with { Reply = null }).ToArray(), Skipped = skipped + _state.Pending.Count });
-                return;
-            }
             if (delivery == ReceiptDelivery.Retryable && current.Attempts < 4 && Fresh(current.Reply) && Now - current.CreatedAt < TimeSpan.FromMinutes(5))
                 pending.Add(current with { Sending = false, NextAttemptAt = Now.AddSeconds(new[] { 2, 5, 15 }[current.Attempts - 1]) });
             else if (delivery != ReceiptDelivery.Sent) skipped++;

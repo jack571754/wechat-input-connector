@@ -11,6 +11,7 @@ public static class ReceiptFormatter
         EventState.Dispatched => $"已派发到{Target(result.Application)}，尚未确认写入结果。",
         EventState.Uncertain => "输入结果不明，自动输入已暂停；请检查电脑后再处理本条。",
         EventState.NeedsTranscript => "本条语音未收到转写文字，未执行输入。",
+        EventState.Rejected => "本条文字过长或含不支持的控制字符，未执行输入；已保留记录，补写将跳过本条。",
         _ => "未执行输入：" + (result.Failure switch
         {
             InputFailure.Paused => "自动输入已暂停",
