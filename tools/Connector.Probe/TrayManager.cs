@@ -36,6 +36,7 @@ internal sealed class TrayManager : IDisposable
     public event Action<bool>? AutoEnterChanged;
     public event Action<bool>? TopmostChanged;
     public event Action? ReconnectRequested;
+    public event Action? ReviewedInputRequested;
     public event Action? ExitRequested;
 
     public TrayManager()
@@ -73,6 +74,7 @@ internal sealed class TrayManager : IDisposable
 
         var reconnectItem = new ToolStripMenuItem("重新扫码绑定", null, (_, _) => ReconnectRequested?.Invoke());
         _contextMenu.Items.Add(reconnectItem);
+        _contextMenu.Items.Add(new ToolStripMenuItem("已检查输入结果，解除暂停", null, (_, _) => ReviewedInputRequested?.Invoke()));
 
         _contextMenu.Items.Add(new ToolStripSeparator());
 

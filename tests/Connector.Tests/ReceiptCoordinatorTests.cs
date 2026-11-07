@@ -181,6 +181,15 @@ public sealed class ReceiptCoordinatorTests
     }
 
     [Fact]
+    public void RestartDoesNotExceedRetryLimitForFinalInFlightAttempt()
+    {
+        var reply = Item().Reply!;
+        var pending = new PendingReceipt("r", "client", reply, "状态", _clock.GetUtcNow(), _clock.GetUtcNow(), 4, Sending: true);
+        var c = Create(new(null, [], [pending]));
+        Assert.Null(c.TakeDue()); Assert.Empty(c.Snapshot.Pending); Assert.Equal(1, c.Snapshot.Skipped);
+    }
+
+    [Fact]
     public void IdleReceiptChecksDoNotContinuouslySaveEncryptedState()
     {
         var saves = 0; var c = Create(save: _ => saves++); var baseline = saves;

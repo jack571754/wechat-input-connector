@@ -18,6 +18,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Connector.Core;
+using ProbeState = Connector.WeChat.ConnectionState;
 using Connector.WeChat;
 using Connector.Windows;
 using QRCoder;
@@ -47,10 +48,11 @@ internal sealed class PillWindow : Window
     private CancellationTokenSource _session = new();
     private TaskCompletionSource<string>? _pendingCode;
     private ProbeState? _state;
+    private ReceiptSession? _live;
+    private readonly SemaphoreSlim _connectTransition = new(1, 1);
+    private Task _connectionTask = Task.CompletedTask;
     private bool _autoInput = true;
     private bool _autoEnter = true;
-    private bool _inputPaused = false;
-    private string? _latestText;
     private bool _isMiniOrb = false;
     private SettingsWindow? _settingsWindow;
     private readonly DispatcherTimer _collapseTimer;
@@ -326,16 +328,12 @@ internal sealed class PillWindow : Window
 
         _tray.AutoInputChanged += enabled => Dispatcher.Invoke(() =>
         {
-            _autoInput = enabled;
-            SaveSettings();
-            SetStatus(enabled ? "已开启自动打字" : "已暂停自动打字", _state is not null ? GreenBrush : YellowBrush);
+            ApplyAutoInput(enabled);
         });
 
         _tray.AutoEnterChanged += enabled => Dispatcher.Invoke(() =>
         {
-            _autoEnter = enabled;
-            SaveSettings();
-            SetStatus(enabled ? "已开启自动回车" : "已关闭自动回车", GreenBrush);
+            ApplyAutoEnter(enabled);
         });
 
         _tray.TopmostChanged += top => Dispatcher.Invoke(() =>
@@ -344,6 +342,12 @@ internal sealed class PillWindow : Window
             SaveSettings();
         });
 
+        _tray.ReviewedInputRequested += () => UpdateRuntime(() =>
+        {
+            _live?.Coordinator.AcknowledgeUncertain();
+            _live?.PublishDiagnostic();
+            SetStatus(_live?.Coordinator.Snapshot.InputPaused == true ? "仍处于暂停状态，请先处理回执队列。" : "已解除异常暂停，历史内容不会自动补写。", YellowBrush);
+        });
         _tray.ReconnectRequested += () => Dispatcher.Invoke(async () => await ConnectAsync(forceLogin: true));
         _tray.ExitRequested += () => Dispatcher.Invoke(() =>
         {
@@ -406,17 +410,11 @@ internal sealed class PillWindow : Window
             _state?.Account?.OwnerId ?? "",
             onAutoInputChanged: val =>
             {
-                _autoInput = val;
-                _tray.AutoInputEnabled = val;
-                SaveSettings();
-                SetStatus(val ? "已开启自动打字" : "已暂停自动打字", GreenBrush);
+                ApplyAutoInput(val);
             },
             onAutoEnterChanged: val =>
             {
-                _autoEnter = val;
-                _tray.AutoEnterEnabled = val;
-                SaveSettings();
-                SetStatus(val ? "已开启自动回车" : "已关闭自动回车", GreenBrush);
+                ApplyAutoEnter(val);
             },
             onTopmostChanged: val =>
             {
@@ -501,66 +499,86 @@ internal sealed class PillWindow : Window
         catch { }
     }
 
+    private void UpdateRuntime(Action action)
+    {
+        try { action(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {
+            _session.Cancel();
+            SetStatus("本地加密状态无法保存，连接和输入已停止。", GrayBrush);
+        }
+    }
+
+    private void ApplyAutoInput(bool enabled) => UpdateRuntime(() =>
+    {
+        _live?.Coordinator.SetAutoInput(enabled);
+        _autoInput = enabled; _tray.AutoInputEnabled = enabled; SaveSettings();
+        _live?.PublishDiagnostic();
+        SetStatus(enabled ? "已开启自动输入；异常暂停需单独解除。" : "自动输入已暂停。", YellowBrush);
+    });
+
+    private void ApplyAutoEnter(bool enabled) => UpdateRuntime(() =>
+    {
+        _live?.Coordinator.SetAutoEnter(enabled);
+        _autoEnter = enabled; _tray.AutoEnterEnabled = enabled; SaveSettings();
+        _live?.PublishDiagnostic();
+        SetStatus(enabled ? "已开启自动回车。" : "已关闭自动回车。", YellowBrush);
+    });
+
     private async Task ConnectAsync(bool forceLogin)
     {
-        _session.Cancel();
-        _session.Dispose();
-        _session = new CancellationTokenSource();
-        var token = _session.Token;
-
+        await _connectTransition.WaitAsync();
         try
         {
-            if (!forceLogin && File.Exists(VaultPath)) _state = ProtectedFile.Load<ProbeState>(VaultPath);
-            if (_state is not null)
-            {
-                _state = _state with { Events = _state.Events.Select(x => x.State == EventState.Inserting ? x with { State = EventState.Uncertain } : x).ToList() };
-                _inputPaused = _state.Events.Any(x => x.State == EventState.Uncertain);
-            }
+            _session.Cancel(); _pendingCode?.TrySetCanceled();
+            await _connectionTask;
+            _session.Dispose(); _session = new(); _live = null;
+            _connectionTask = RunConnectionAsync(forceLogin, _session.Token);
+        }
+        finally { _connectTransition.Release(); }
+    }
 
+    private async Task RunConnectionAsync(bool forceLogin, CancellationToken token)
+    {
+        try
+        {
+            if (File.Exists(VaultPath)) _state = ProtectedFile.Load<ProbeState>(VaultPath);
             if (forceLogin || _state is null)
             {
-                ExpandToPill();
-                SetStatus("请扫码绑定微信…", YellowBrush);
+                ExpandToPill(); SetStatus("请扫码连接微信…", YellowBrush);
                 _drawer.Visibility = Visibility.Visible;
-                _cardBorder.CornerRadius = new CornerRadius(16);
-
-                var progress = new Progress<LoginProgress>(OnLoginProgress);
                 var login = new QrLogin(new(_http, _metadata), RequestVerifyCodeAsync);
-                var result = await login.RunAsync(progress, token);
+                var result = await login.RunAsync(new Progress<LoginProgress>(OnLoginProgress), token);
                 _state = new(result, null, []);
                 ProtectedFile.Save(VaultPath, _state);
             }
-
-            // Successfully connected: hide drawer & collapse to mini orb after 2 seconds
             _drawer.Visibility = Visibility.Collapsed;
-            ExpandToPill();
-            SetStatus("微信已就绪 · 发语音直接打字", GreenBrush);
-
-            _ = Task.Run(async () =>
-            {
-                await Task.Delay(2000, token);
-                Dispatcher.Invoke(() =>
-                {
-                    if (_drawer.Visibility != Visibility.Visible)
-                        CollapseToMiniOrb();
-                });
-            }, token);
-
-            var client = new ILinkClient(_http, _metadata, _state.Account);
-            try { await client.NotifyLifecycleAsync(true, token); } catch { }
-            await ReceiveAsync(client, token);
+            _live = new ReceiptSession(_directory, _state, _autoInput, _autoEnter, _http, _metadata, ReportSessionStatus);
+            SetStatus("微信已连接；发送 /状态 可查询。", GreenBrush);
+            _collapseTimer.Start();
+            await _live.RunAsync(token);
         }
         catch (OperationCanceledException) { }
         catch (SessionExpiredException)
         {
-            ExpandToPill();
-            SetStatus("微信会话失效，请重新扫码", GrayBrush);
+            SetStatus("微信会话失效，收发已停止，请重新扫码。", GrayBrush);
             _drawer.Visibility = Visibility.Visible;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            SetStatus($"连接异常: {ex.Message}", GrayBrush);
+            SetStatus("连接或本地状态处理失败，收发和输入已停止。", GrayBrush);
         }
+        finally { _live = null; }
+    }
+
+    private void ReportSessionStatus(string text)
+    {
+        if (Dispatcher.HasShutdownStarted) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!IsLoaded) return;
+            ExpandToPill(); SetStatus(text, YellowBrush); _collapseTimer.Start();
+        });
     }
 
     private void OnLoginProgress(LoginProgress progress)
@@ -605,118 +623,25 @@ internal sealed class PillWindow : Window
         return completion.Task.WaitAsync(ct);
     }
 
-    private async Task ReceiveAsync(ILinkClient client, CancellationToken ct)
-    {
-        var parser = new MessageParser();
-        while (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                var batch = await client.GetUpdatesAsync(_state!.Cursor, ct);
-                var items = new List<InboxItem>(_state.Events);
-                var keys = items.Select(x => x.StorageKey).ToHashSet(StringComparer.Ordinal);
-                var fresh = new List<InboxItem>();
-
-                foreach (var message in batch.Messages)
-                {
-                    var parsed = parser.Parse(message, new(_state.Account.BotId, _state.Account.OwnerId)).Item;
-                    if (!keys.Add(parsed.StorageKey)) continue;
-                    items.Add(parsed);
-                    fresh.Add(parsed);
-                }
-
-                var updated = _state with
-                {
-                    Cursor = string.IsNullOrEmpty(batch.NextCursor) ? _state.Cursor : batch.NextCursor,
-                    Events = items
-                };
-                ProtectedFile.Save(VaultPath, updated);
-                _state = updated;
-
-                foreach (var item in fresh)
-                {
-                    if (item.Event is not null)
-                    {
-                        _latestText = item.Event.Text;
-
-                        // Wake up & Expand Pill on input!
-                        Dispatcher.Invoke(() =>
-                        {
-                            ExpandToPill();
-                            _collapseTimer.Stop();
-                            SetStatus($"输入中：{_latestText}", GreenBrush);
-                        });
-
-                        if (_autoInput && !_inputPaused)
-                        {
-                            await _attemptGate.TryRunAsync(async token =>
-                            {
-                                var res = await FocusedInputProbe.InsertAsync(item.Event.Text, System.IO.Path.Combine(_directory, "input-recovery.dpapi"), token, _autoEnter);
-                                Dispatcher.Invoke(() =>
-                                {
-                                    if (res.State == "Dispatched" || res.State == "Verified")
-                                    {
-                                        SetStatus($"已打入：{_latestText}", GreenBrush);
-                                    }
-                                    else
-                                    {
-                                        SetStatus($"未对准输入框：{_latestText}", YellowBrush);
-                                    }
-                                    // Start 3 seconds countdown to collapse back to Mini Orb!
-                                    _collapseTimer.Start();
-                                });
-                            }, ct);
-                        }
-                        else
-                        {
-                            Dispatcher.Invoke(() =>
-                            {
-                                SetStatus($"收到：{_latestText} (Ctrl+Alt+V补打)", YellowBrush);
-                                _collapseTimer.Start();
-                            });
-                        }
-                    }
-                }
-            }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex)
-            {
-                Dispatcher.Invoke(() => SetStatus($"重试中: {ex.Message}", GrayBrush));
-                await Task.Delay(2000, ct);
-            }
-        }
-    }
-
     private async Task TriggerManualReplayAsync()
     {
-        if (string.IsNullOrWhiteSpace(_latestText))
+        try
         {
-            ExpandToPill();
-            SetStatus("暂无最新文字", YellowBrush);
-            _collapseTimer.Start();
-            return;
-        }
-
-        ExpandToPill();
-        _collapseTimer.Stop();
-
-        await _attemptGate.TryRunAsync(async token =>
-        {
-            var res = await FocusedInputProbe.InsertAsync(_latestText, System.IO.Path.Combine(_directory, "input-recovery.dpapi"), token, _autoEnter);
-            Dispatcher.Invoke(() =>
+            await _attemptGate.TryRunAsync(async token =>
             {
-                if (res.State == "Dispatched" || res.State == "Verified")
-                    SetStatus($"已补写：{_latestText}", GreenBrush);
-                else
-                    SetStatus($"请先点入输入框: {_latestText}", YellowBrush);
-
-                _collapseTimer.Start();
-            });
-        }, _session.Token);
+                for (var i = 0; i < 50 && new[] { 0x10, 0x11, 0x12 }.Any(k => (GetAsyncKeyState(k) & 0x8000) != 0); i++)
+                    await Task.Delay(20, token);
+                if (_live is null) { SetStatus("微信连接尚未就绪。", YellowBrush); return; }
+                await _live.InsertNextAsync(token);
+            }, _session.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception) { _session.Cancel(); SetStatus("输入结果无法保存，收发和输入已停止。", GrayBrush); }
     }
 
     // --- Global Hotkey (Ctrl + Alt + V) ---
     private const int HotkeyId = 9001;
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(nint hWnd, int id, uint fsModifiers, uint vk);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(nint hWnd, int id);
 
@@ -725,7 +650,7 @@ internal sealed class PillWindow : Window
         var helper = new WindowInteropHelper(this);
         var source = HwndSource.FromHwnd(helper.Handle);
         source?.AddHook(HwndHook);
-        RegisterHotKey(helper.Handle, HotkeyId, 0x0002 | 0x0001, 0x56);
+        RegisterHotKey(helper.Handle, HotkeyId, 0x4003, 0x56);
     }
 
     private void UnregisterGlobalHotkey()

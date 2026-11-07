@@ -153,8 +153,6 @@ public static class FocusedInputProbe
 
     public static void RunHelper()
     {
-        var inputDesk = Native.OpenInputDesktop(0, false, 0x01FF);
-        if (inputDesk != 0) Native.SetThreadDesktop(inputDesk);
         Console.InputEncoding = new UTF8Encoding(false);
         Console.OutputEncoding = new UTF8Encoding(false);
         var dispatched = false;
@@ -401,7 +399,6 @@ internal static class Native
     [DllImport("imm32.dll")] internal static extern int ImmGetCompositionStringW(nint context, uint index, nint buffer, uint length);
     [DllImport("imm32.dll")] internal static extern bool ImmReleaseContext(nint window, nint context);
     [DllImport("user32.dll")] internal static extern nint OpenInputDesktop(uint flags, bool inherit, uint access);
-    [DllImport("user32.dll", SetLastError = true)] internal static extern bool SetThreadDesktop(nint desktop);
     [DllImport("user32.dll")] internal static extern bool CloseDesktop(nint desktop);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool GetUserObjectInformationW(nint obj, int index, StringBuilder info, uint length, out uint needed);
     [DllImport("user32.dll")] internal static extern uint SendInput(uint count, Input[] inputs, int size);

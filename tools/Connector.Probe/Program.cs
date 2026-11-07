@@ -1,4 +1,5 @@
 using Connector.Core;
+using ProbeState = Connector.WeChat.ConnectionState;
 using Connector.WeChat;
 using Connector.Windows;
 using QRCoder;
@@ -14,8 +15,6 @@ namespace Connector.Probe;
 
 internal static class Program
 {
-    [DllImport("user32.dll")] private static extern nint OpenInputDesktop(uint flags, bool inherit, uint access);
-    [DllImport("user32.dll")] private static extern bool SetThreadDesktop(nint desktop);
 
     [STAThread]
     private static void Main(string[] args)
@@ -23,8 +22,6 @@ internal static class Program
         string? directory = null;
         try
         {
-            var desk = OpenInputDesktop(0, false, 0x01FF);
-            if (desk != 0) SetThreadDesktop(desk);
             if (args.Contains("--input-helper")) { FocusedInputProbe.RunHelper(); return; }
             directory = ResolveDataDirectory(args);
             Directory.CreateDirectory(directory);
@@ -43,12 +40,12 @@ internal static class Program
             var app = new System.Windows.Application();
             app.DispatcherUnhandledException += (s, e) =>
             {
-                File.AppendAllText(Path.Combine(directory, "crash.log"), $"[Dispatcher Exception] {e.Exception}\n");
+                File.AppendAllText(Path.Combine(directory, "crash.log"), $"[Dispatcher Exception] {e.Exception.GetType().Name}\n");
                 e.Handled = false;
             };
             AppDomain.CurrentDomain.UnhandledException += (s, e) =>
             {
-                File.AppendAllText(Path.Combine(directory, "crash.log"), $"[AppDomain Exception] {e.ExceptionObject}\n");
+                File.AppendAllText(Path.Combine(directory, "crash.log"), $"[AppDomain Exception] {e.ExceptionObject?.GetType().Name}\n");
             };
             app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
             var window = new PillWindow(directory, tray);
@@ -58,7 +55,7 @@ internal static class Program
         catch (Exception ex)
         {
             var targetDir = directory ?? AppContext.BaseDirectory;
-            File.WriteAllText(Path.Combine(targetDir, "crash.log"), ex.ToString());
+            File.WriteAllText(Path.Combine(targetDir, "crash.log"), ex.GetType().Name);
         }
     }
 
@@ -90,9 +87,6 @@ internal static class Program
         return localSubdir;
     }
 }
-
-public sealed record ProbeState(LoginResult Account, string? Cursor, List<InboxItem> Events,
-    int VoiceTotal = 0, int VoiceWithTranscript = 0);
 
 internal sealed class ProbeForm : Forms.Form
 {

@@ -20,7 +20,12 @@ public sealed class ReceiptCoordinator
         var recovered = snapshot with
         {
             Events = snapshot.Events.Select(x => x.State == EventState.Inserting ? x with { State = EventState.Uncertain, ReasonCode = "restart_uncertain" } : x).ToArray(),
-            Pending = snapshot.Pending.Select(x => x with { Sending = false }).ToArray(),
+            Pending = snapshot.Pending.Where(x => x.Attempts < 4).Select(x => x with
+            {
+                Sending = false,
+                NextAttemptAt = x.Sending && x.Attempts > 0 ? Now.AddSeconds(new[] { 2, 5, 15 }[x.Attempts - 1]) : x.NextAttemptAt
+            }).ToArray(),
+            Skipped = snapshot.Skipped + snapshot.Pending.Count(x => x.Attempts >= 4),
             InputPaused = snapshot.InputPaused || snapshot.Events.Any(x => x.State is EventState.Inserting or EventState.Uncertain)
         };
         Commit(Prune(recovered));
