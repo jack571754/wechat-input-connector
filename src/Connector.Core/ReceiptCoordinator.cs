@@ -53,7 +53,8 @@ public sealed class ReceiptCoordinator
             Events = snapshot.Events.Select(x => x.State == EventState.Inserting ? x with { State = EventState.Uncertain, ReasonCode = "restart_uncertain" } : x).ToArray(),
             Pending = snapshot.Pending.Where(x => x.Attempts < 4).Select(x => x with
             {
-                Text = x.Text.Replace("输入结果不明，自动输入已暂停；请检查电脑后再处理本条。", ReceiptFormatter.UncertainText, StringComparison.Ordinal),
+                Text = x.Text.Replace("输入结果不明，自动输入已暂停；请检查电脑后再处理本条。", ReceiptFormatter.UncertainText, StringComparison.Ordinal)
+                    .Replace("，尚未确认写入结果。", "。", StringComparison.Ordinal),
                 Sending = false,
                 NextAttemptAt = x.Sending && x.Attempts > 0 ? Now.AddSeconds(new[] { 2, 5, 15 }[x.Attempts - 1]) : x.NextAttemptAt
             }).ToArray(),

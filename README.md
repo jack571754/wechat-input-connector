@@ -7,7 +7,7 @@
 
 ## 微信状态回执
 
-- 输入后回复真实结果：“已确认写入”“已派发，尚未确认”或“未执行输入，内容已暂存”。仅派发按键不会冒充写入成功。
+- 输入派发后简短回复“已派发到当前输入框”；不做写入后文字回读，也不再提示“尚未确认”。无法派发则如实回复原因，不把派发等同于文字已写入。
 - 在原绑定私聊发送 `/状态`，查询连接、自动输入/回车开关、待处理及待发回执数量。查询指令不会写入电脑。当前应用/输入框定位尚未接入适配器时显示“未确认”。
 - 本地输入开关变化会回报实际状态；单条结果不明时保留记录且不再重发，后续新消息继续尝试输入，历史积压不会自动补写。
 - 一条消息通常只回一条结果，不回显正文、路径、窗口标题或凭据。回复失败只有限重试回执，绝不重新执行输入。
@@ -96,7 +96,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 build
 
 ### 发布独立免运行库版本 (Self-Contained)
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 publish tools/Connector.Probe/Connector.Probe.csproj -c Release -r win-x64 --self-contained true -o artifacts/continuous-input
+powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 publish tools/Connector.Probe/Connector.Probe.csproj -c Release -r win-x64 --self-contained true -o artifacts/simple-input
 ```
 *编译输出包含完整的 Windows x64 .NET 运行时，在任何 Windows 10/11 电脑上均可双击直接启动。*
 

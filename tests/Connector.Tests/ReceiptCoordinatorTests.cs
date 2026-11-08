@@ -35,7 +35,8 @@ public sealed class ReceiptCoordinatorTests
     {
         var c = Create(); c.CommitBatch(null, [Item()]);
         await c.ProcessAsync("m1", (_, _) => Task.FromResult(new InputOutcome(EventState.Dispatched)), false, default);
-        Assert.Contains("尚未确认", c.Snapshot.Pending.Single().Text);
+        Assert.StartsWith("已派发到当前输入框。\n编号：", c.Snapshot.Pending.Single().Text);
+        Assert.DoesNotContain("尚未确认", c.Snapshot.Pending.Single().Text);
         Assert.DoesNotContain("已确认写入", c.Snapshot.Pending.Single().Text);
         Assert.False(c.Snapshot.InputPaused);
     }
@@ -108,6 +109,16 @@ public sealed class ReceiptCoordinatorTests
         var migrated = c.Snapshot.Pending.Single();
         Assert.DoesNotContain("已暂停", migrated.Text); Assert.Contains("后续新消息继续", migrated.Text);
         Assert.Equal("id", migrated.Id); Assert.Equal("client", migrated.ClientId); Assert.Equal(1, migrated.Attempts);
+    }
+
+    [Fact]
+    public void LegacyDispatchReceiptDropsConfirmationPromptWithoutChangingItsClientId()
+    {
+        var pending = new PendingReceipt("id", "client", Item().Reply!, "已派发到当前输入框，尚未确认写入结果。\n编号：12345678",
+            _clock.GetUtcNow(), _clock.GetUtcNow());
+        var c = Create(new(null, [], [pending]));
+        Assert.Equal("已派发到当前输入框。\n编号：12345678", c.Snapshot.Pending.Single().Text);
+        Assert.Equal("client", c.Snapshot.Pending.Single().ClientId);
     }
 
     [Fact]

@@ -73,7 +73,6 @@ internal sealed class PillWindow : Window
     private readonly TextBlock _drawerHint;
 
     private static readonly SolidColorBrush GreenBrush = new(Color.FromRgb(7, 193, 96));
-    private static readonly SolidColorBrush YellowBrush = new(Color.FromRgb(255, 184, 0));
     private static readonly SolidColorBrush GrayBrush = new(Color.FromRgb(142, 142, 147));
     private static readonly SolidColorBrush DarkBg = new(Color.FromArgb(242, 26, 26, 28));
     private static readonly SolidColorBrush BorderColor = new(Color.FromArgb(120, 75, 75, 80));
@@ -180,7 +179,7 @@ internal sealed class PillWindow : Window
         {
             Width = 9,
             Height = 9,
-            Fill = YellowBrush,
+            Fill = GreenBrush,
             HorizontalAlignment = HAlign.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -346,7 +345,7 @@ internal sealed class PillWindow : Window
         {
             _live?.ReviewAndResume();
             _live?.PublishDiagnostic();
-            SetStatus(_live?.Coordinator.Snapshot.InputPaused == true ? "仍处于暂停状态，请先处理回执队列。" : "已解除异常暂停，历史内容不会自动补写。", YellowBrush);
+            SetStatus(_live?.Coordinator.Snapshot.InputPaused == true ? "仍处于暂停状态，请先处理回执队列。" : "已解除异常暂停，历史内容不会自动补写。", GreenBrush);
         });
         _tray.ReconnectRequested += () => Dispatcher.Invoke(async () => await ConnectAsync(forceLogin: true));
         _tray.ExitRequested += () => Dispatcher.Invoke(() =>
@@ -504,7 +503,7 @@ internal sealed class PillWindow : Window
         try { action(); }
         catch (LegacyClipboardRecoveryException)
         {
-            SetStatus("存在旧版剪贴板恢复记录，需先处理；已保持暂停。", YellowBrush);
+            SetStatus("存在旧版剪贴板恢复记录，需先处理；已保持暂停。", GreenBrush);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
         {
@@ -518,7 +517,7 @@ internal sealed class PillWindow : Window
         _live?.Coordinator.SetAutoInput(enabled);
         _autoInput = enabled; _tray.AutoInputEnabled = enabled; SaveSettings();
         _live?.PublishDiagnostic();
-        SetStatus(enabled ? (_live?.Coordinator.Snapshot.InputPaused == true ? "自动输入开关已开启，当前仍有输入阻塞。" : "已开启自动输入。") : "自动输入已暂停。", YellowBrush);
+        SetStatus(enabled ? (_live?.Coordinator.Snapshot.InputPaused == true ? "自动输入开关已开启，当前仍有输入阻塞。" : "已开启自动输入。") : "自动输入已暂停。", GreenBrush);
     });
 
     private void ApplyAutoEnter(bool enabled) => UpdateRuntime(() =>
@@ -526,7 +525,7 @@ internal sealed class PillWindow : Window
         _live?.Coordinator.SetAutoEnter(enabled);
         _autoEnter = enabled; _tray.AutoEnterEnabled = enabled; SaveSettings();
         _live?.PublishDiagnostic();
-        SetStatus(enabled ? "已开启自动回车。" : "已关闭自动回车。", YellowBrush);
+        SetStatus(enabled ? "已开启自动回车。" : "已关闭自动回车。", GreenBrush);
     });
 
     private async Task ConnectAsync(bool forceLogin)
@@ -549,7 +548,7 @@ internal sealed class PillWindow : Window
             if (File.Exists(VaultPath)) _state = ProtectedFile.Load<ProbeState>(VaultPath);
             if (forceLogin || _state is null)
             {
-                ExpandToPill(); SetStatus("请扫码连接微信…", YellowBrush);
+                ExpandToPill(); SetStatus("请扫码连接微信…", GreenBrush);
                 _drawer.Visibility = Visibility.Visible;
                 var login = new QrLogin(new(_http, _metadata), RequestVerifyCodeAsync);
                 var result = await login.RunAsync(new Progress<LoginProgress>(OnLoginProgress), token);
@@ -581,7 +580,7 @@ internal sealed class PillWindow : Window
         Dispatcher.BeginInvoke(() =>
         {
             if (!IsLoaded) return;
-            ExpandToPill(); SetStatus(text, YellowBrush); _collapseTimer.Start();
+            ExpandToPill(); SetStatus(text, GreenBrush); _collapseTimer.Start();
         });
     }
 
@@ -635,7 +634,7 @@ internal sealed class PillWindow : Window
             {
                 for (var i = 0; i < 50 && new[] { 0x10, 0x11, 0x12 }.Any(k => (GetAsyncKeyState(k) & 0x8000) != 0); i++)
                     await Task.Delay(20, token);
-                if (_live is null) { SetStatus("微信连接尚未就绪。", YellowBrush); return; }
+                if (_live is null) { SetStatus("微信连接尚未就绪。", GreenBrush); return; }
                 await _live.InsertNextAsync(token);
             }, _session.Token);
         }

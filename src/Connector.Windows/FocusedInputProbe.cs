@@ -17,7 +17,7 @@ public static class FocusedInputProbe
     private sealed record Wire(string Stage, NativeProbeResult? Result = null, int FocusPid = 0, string? Backend = null);
     private sealed record Recovery(string Stage, int FocusPid, string? Backend, DateTimeOffset CreatedAt);
     private sealed record Focus(nint Window, nint EditWindow, int ProcessId, AutomationElement? Element,
-        TextPattern? Pattern, string? Original, int Caret, string Backend);
+        string? Original, int Caret, string Backend);
 
     public static async Task<NativeProbeResult> InsertAsync(string text, string recoveryPath, CancellationToken ct, bool autoEnter = false)
     {
@@ -93,7 +93,7 @@ public static class FocusedInputProbe
 
             if (Native.GetForegroundWindow() == focus.Window)
             {
-                return new("Dispatched", "已输入到当前输入框。", "Untouched", focus.Backend);
+                return new("Dispatched", "已派发到当前输入框。", "Untouched", focus.Backend);
             }
 
             return new("Uncertain", "已派发，但目标窗口发生切换；本条不再重发。", "Untouched", focus.Backend);
@@ -204,29 +204,9 @@ public static class FocusedInputProbe
                 if (Native.SendInput((uint)keys.Length, keys, Marshal.SizeOf<Native.Input>()) != keys.Length) throw new IOException();
             }
 
-            if (focus.Pattern is not null && focus.Original is not null)
-            {
-                var expected = focus.Original[..focus.Caret] + Normalize(request.Text) + focus.Original[focus.Caret..];
-                var clock = Stopwatch.StartNew();
-                while (clock.Elapsed < TimeSpan.FromSeconds(2))
-                {
-                    if (Native.GetForegroundWindow() != focus.Window) break;
-                    try
-                    {
-                        if (Normalize(focus.Pattern.DocumentRange.GetText(100001)) == expected)
-                        {
-                            Send(new("done", new("Verified", "已在当前输入框确认文字。", "Untouched", focus.Backend)));
-                            return;
-                        }
-                    }
-                    catch { break; }
-                    Thread.Sleep(15);
-                }
-            }
-
             if (Native.GetForegroundWindow() == focus.Window)
             {
-                Send(new("done", new("Dispatched", "已输入到当前输入框。", "Untouched", focus.Backend)));
+                Send(new("done", new("Dispatched", "已派发到当前输入框。", "Untouched", focus.Backend)));
                 return;
             }
 
@@ -338,7 +318,7 @@ public static class FocusedInputProbe
             catch { }
         }
 
-        return new(window, nativeEdit, focusPid, element, pattern, original, caret,
+        return new(window, nativeEdit, focusPid, element, original, caret,
             direct ? "EditMessage" : "Unicode");
     }
 
