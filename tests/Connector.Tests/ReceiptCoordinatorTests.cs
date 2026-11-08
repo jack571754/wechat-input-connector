@@ -99,6 +99,34 @@ public sealed class ReceiptCoordinatorTests
     }
 
     [Fact]
+    public void LegacyUncertainPendingReceiptIsUpdatedWithoutChangingItsDeliveryIdentity()
+    {
+        var item = Item() with { State = EventState.Uncertain };
+        var pending = new PendingReceipt("id", "client", item.Reply!, "输入结果不明，自动输入已暂停；请检查电脑后再处理本条。\n编号：12345678",
+            _clock.GetUtcNow(), _clock.GetUtcNow(), Attempts: 1);
+        var c = Create(new(null, [item], [pending], InputPaused: true));
+        var migrated = c.Snapshot.Pending.Single();
+        Assert.DoesNotContain("已暂停", migrated.Text); Assert.Contains("后续新消息继续", migrated.Text);
+        Assert.Equal("id", migrated.Id); Assert.Equal("client", migrated.ClientId); Assert.Equal(1, migrated.Attempts);
+    }
+
+    [Fact]
+    public async Task LegacyOverlappingPauseUsesCurrentCapacityAndStillEnforcesTheLimit()
+    {
+        var item = Item() with { State = EventState.Uncertain };
+        var pending = Enumerable.Range(0, 98).Select(i => new PendingReceipt($"r{i}", $"c{i}", item.Reply!, "状态",
+            _clock.GetUtcNow(), _clock.GetUtcNow())).ToArray();
+        var c = Create(new(null, [item], pending, InputPaused: true));
+        Assert.False(c.Snapshot.InputPaused);
+        c.CommitBatch(null, [Item("next"), Item("blocked")]); var calls = 0;
+        Task<InputOutcome> Write(TextEvent e, CancellationToken ct) { calls++; return Verified(e, ct); }
+        await c.ProcessAsync("next", Write, false, default);
+        await c.ProcessAsync("blocked", Write, false, default);
+        Assert.Equal(1, calls); Assert.Equal(99, c.Snapshot.Pending.Count);
+        Assert.True(c.Snapshot.InputPaused); Assert.Equal(InputPauseCause.OutboxFull, c.Snapshot.PauseCause);
+    }
+
+    [Fact]
     public async Task StatusQueryIsNeverInsertedAndHasPriority()
     {
         var c = Create(); c.CommitBatch(null, [Item()]); await c.ProcessAsync("m1", Verified, false, default);

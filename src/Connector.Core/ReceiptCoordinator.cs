@@ -41,7 +41,8 @@ public sealed class ReceiptCoordinator
         var pauseCause = snapshot.PauseCause;
         if (snapshot.InputPaused && pauseCause == InputPauseCause.None)
         {
-            // 旧版未区分阻塞原因：只解除有结果不明记录且无其他阻塞证据的旧暂停。
+            // 旧版叠加原因不可还原：按当前容量迁移；有空位且存在未知记录时继续新输入。
+            // 新版已明确标记的其他阻塞不会进入这条迁移分支。
             pauseCause = !snapshot.Connected ? InputPauseCause.SessionExpired
                 : snapshot.Pending.Count(x => !x.Query) >= 99 ? InputPauseCause.OutboxFull
                 : snapshot.Events.Any(x => x.State is EventState.Inserting or EventState.Uncertain) ? InputPauseCause.None
@@ -52,6 +53,7 @@ public sealed class ReceiptCoordinator
             Events = snapshot.Events.Select(x => x.State == EventState.Inserting ? x with { State = EventState.Uncertain, ReasonCode = "restart_uncertain" } : x).ToArray(),
             Pending = snapshot.Pending.Where(x => x.Attempts < 4).Select(x => x with
             {
+                Text = x.Text.Replace("输入结果不明，自动输入已暂停；请检查电脑后再处理本条。", ReceiptFormatter.UncertainText, StringComparison.Ordinal),
                 Sending = false,
                 NextAttemptAt = x.Sending && x.Attempts > 0 ? Now.AddSeconds(new[] { 2, 5, 15 }[x.Attempts - 1]) : x.NextAttemptAt
             }).ToArray(),

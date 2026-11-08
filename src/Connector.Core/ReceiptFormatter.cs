@@ -4,12 +4,13 @@ namespace Connector.Core;
 
 public static class ReceiptFormatter
 {
+    internal const string UncertainText = "本条输入结果不明，已保留记录且不再重发；后续新消息继续尝试输入。";
     private static string Target(string? application) => application is "Codex" or "Antigravity" ? application : "当前输入框";
     public static string Input(InboxItem item, InputOutcome result) => result.State switch
     {
         EventState.Verified => $"已确认写入{Target(result.Application)}，共 {new StringInfo(item.Event?.Text ?? "").LengthInTextElements} 字。",
         EventState.Dispatched => $"已派发到{Target(result.Application)}，尚未确认写入结果。",
-        EventState.Uncertain => "本条输入结果不明，已保留记录且不再重发；后续新消息继续尝试输入。",
+        EventState.Uncertain => UncertainText,
         EventState.NeedsTranscript => "本条语音未收到转写文字，未执行输入。",
         EventState.Rejected => "本条文字过长或含不支持的控制字符，未执行输入；已保留记录，补写将跳过本条。",
         _ => "未执行输入：" + (result.Failure switch
