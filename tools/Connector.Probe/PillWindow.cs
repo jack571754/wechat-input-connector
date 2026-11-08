@@ -221,13 +221,13 @@ internal sealed class PillWindow : Window
         // Status / Message Text
         _statusText = new TextBlock
         {
-            Text = "正在连接微信…",
+            Text = "微信输入连接器",
             Foreground = new SolidColorBrush(Color.FromRgb(32, 36, 40)),
             FontSize = 12.5,
             FontFamily = new FontFamily("Microsoft YaHei UI, Segoe UI"),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            ToolTip = "连接与派发状态；Ctrl+Alt+V 补写下一条待输入消息",
+            ToolTip = "微信输入连接器；Ctrl+Alt+V 补写下一条文字",
             Margin = new Thickness(0, 0, 8, 0)
         };
 
@@ -650,6 +650,7 @@ internal sealed class PillWindow : Window
             _statusDot.Fill = dotColor;
             _miniOrbDot.Fill = dotColor;
             _statusText.Text = text;
+            _statusText.ToolTip = text;
 
             if (dotColor == GreenBrush)
             {
@@ -766,7 +767,7 @@ internal sealed class PillWindow : Window
             }
             _drawer.Visibility = Visibility.Collapsed;
             _live = new ReceiptSession(_directory, _state, _autoInput, _autoEnter, _http, _metadata, ReportSessionStatus);
-            SetStatus("微信已连接；发送 /状态 可查询。", GreenBrush);
+            SetStatus("微信输入连接器", GreenBrush);
             _collapseTimer.Start();
             await _live.RunAsync(token);
         }
@@ -793,12 +794,12 @@ internal sealed class PillWindow : Window
             _collapseTimer.Start();
             return;
         }
-        SetStatus("📸 正在截屏并上传微信…", GreenBrush);
+        SetStatus("📸 屏幕截图", GreenBrush);
         if (_isMiniOrb) ExpandToPill();
         var success = await _live.SendScreenshotToWeChatAsync(CancellationToken.None);
         if (success)
         {
-            SetStatus("📸 已截屏并回传微信", GreenBrush);
+            SetStatus("📸 屏幕截图", GreenBrush);
         }
         else
         {

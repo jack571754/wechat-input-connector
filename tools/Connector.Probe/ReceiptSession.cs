@@ -179,8 +179,20 @@ internal sealed class ReceiptSession
     private void ReportInput(string key)
     {
         var item = Coordinator.Snapshot.Events.FirstOrDefault(x => x.StorageKey == key);
-        if (item is null) { _report("该记录已按保留规则归档。"); return; }
-        _report(ReceiptFormatter.Input(item, new(item.State, item.Failure ?? InputFailure.NoInput)));
+        if (item is null) return;
+        if (FeedbackCommandRouter.IsScreenshotCommand(item.Event?.Text ?? ""))
+        {
+            _report("📸 屏幕截图");
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(item.Event?.Text))
+        {
+            _report(item.Event.Text);
+        }
+        else
+        {
+            _report(ReceiptFormatter.Input(item, new(item.State, item.Failure ?? InputFailure.NoInput)));
+        }
     }
     private async Task<ReceiptDelivery> SendAsync(PendingReceipt receipt, CancellationToken ct)
     {
