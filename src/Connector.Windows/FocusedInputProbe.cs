@@ -9,8 +9,11 @@ using System.Windows.Automation.Text;
 
 namespace Connector.Windows;
 
-public sealed record NativeProbeResult(string State, string Reason, string Clipboard, string? Backend = null);
-public sealed record NativeProbeRequest(string Text, int OriginProcessId);
+public sealed record NativeProbeResult(string State, string Reason, string Clipboard, string? Backend = null, string? FailureCode = null);
+public sealed record NativeProbeRequest(string Text, int OriginProcessId, bool AutoEnter = false, long TargetWindow = 0, int TargetProcessId = 0)
+{
+    public override string ToString() => "输入请求（正文已隐藏）";
+}
 
 public static class FocusedInputProbe
 {
@@ -26,87 +29,15 @@ public static class FocusedInputProbe
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { return new("Queued", "旧输入阶段记录无法归档，本条尚未执行输入。", "Untouched"); }
 
-        try
-        {
-            return ExecuteDirect(text, Environment.ProcessId, autoEnter);
-        }
-        catch (Exception)
-        {
-            return await InsertViaHelperAsync(text, recoveryPath, ct);
-        }
+        ct.ThrowIfCancellationRequested();
+        return await InsertViaHelperAsync(text, recoveryPath, autoEnter, ct);
     }
 
-    public static NativeProbeResult ExecuteDirect(string text, int originPid, bool autoEnter = false)
-    {
-        var dispatched = false;
-        try
-        {
-            if (!ProbePolicies.IsSafeText(text)) throw new ProbeRefusal("文字不符合输入条件。");
-            var focus = CaptureFocus(originPid);
-            if (text.Length > 10000)
-                throw new ProbeRefusal("文本超出长度限制，已保留在队列。");
-            VerifyFocus(focus, originPid);
-
-            if (focus.Backend == "EditMessage")
-            {
-                dispatched = true;
-                if (Native.SendMessageTimeoutW(focus.EditWindow, 0x00C2, 1, text, 0x23, 500, out _) == 0)
-                    throw new IOException();
-                if (autoEnter)
-                {
-                    var enterKeys = new[] { Native.Key(0x0D, 0), Native.Key(0x0D, 2) };
-                    Native.SendInput((uint)enterKeys.Length, enterKeys, Marshal.SizeOf<Native.Input>());
-                }
-            }
-            else
-            {
-                var inputList = new List<Native.Input>();
-                for (int i = 0; i < text.Length; i++)
-                {
-                    char c = text[i];
-                    if (c == '\r')
-                    {
-                        if (i + 1 < text.Length && text[i + 1] == '\n') continue;
-                        inputList.Add(Native.Key(0x0D, 0));
-                        inputList.Add(Native.Key(0x0D, 2));
-                    }
-                    else if (c == '\n')
-                    {
-                        inputList.Add(Native.Key(0x0D, 0));
-                        inputList.Add(Native.Key(0x0D, 2));
-                    }
-                    else
-                    {
-                        inputList.Add(Native.Unicode(c, false));
-                        inputList.Add(Native.Unicode(c, true));
-                    }
-                }
-                if (autoEnter)
-                {
-                    inputList.Add(Native.Key(0x0D, 0));
-                    inputList.Add(Native.Key(0x0D, 2));
-                }
-                dispatched = true;
-                var keys = inputList.ToArray();
-                if (Native.SendInput((uint)keys.Length, keys, Marshal.SizeOf<Native.Input>()) != keys.Length) throw new IOException();
-            }
-
-            if (Native.GetForegroundWindow() == focus.Window)
-            {
-                return new("Dispatched", "已派发到当前输入框。", "Untouched", focus.Backend);
-            }
-
-            return new("Uncertain", "已派发，但目标窗口发生切换；本条不再重发。", "Untouched", focus.Backend);
-        }
-        catch (ProbeRefusal error) { return new(dispatched ? "Uncertain" : "Queued", error.Message, "Untouched"); }
-        catch (Exception error) when (error is IOException or InvalidOperationException or ElementNotAvailableException
-            or UnauthorizedAccessException or System.ComponentModel.Win32Exception or COMException or JsonException or ArgumentException)
-        { return new(dispatched ? "Uncertain" : "Queued", "Windows 焦点检查或输入未完成，已停止本次操作。", "Untouched"); }
-    }
-
-    private static async Task<NativeProbeResult> InsertViaHelperAsync(string text, string recoveryPath, CancellationToken ct)
+    private static async Task<NativeProbeResult> InsertViaHelperAsync(string text, string recoveryPath, bool autoEnter, CancellationToken ct)
     {
         var prepared = false;
+        var targetWindow = Native.GetForegroundWindow();
+        Native.GetWindowThreadProcessId(targetWindow, out var targetPid);
         try
         {
             using var job = new OwnedHelperJob();
@@ -121,7 +52,7 @@ public static class FocusedInputProbe
             {
                 job.Attach(child);
                 await ReadWire(child, TimeSpan.FromSeconds(8), ct);
-                await child.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new NativeProbeRequest(text, Environment.ProcessId)));
+                await child.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new NativeProbeRequest(text, Environment.ProcessId, autoEnter, (long)targetWindow, (int)targetPid)));
                 var first = await ReadWire(child, TimeSpan.FromMilliseconds(800), ct);
                 if (first.Result is not null) return first.Result;
                 if (first.Stage != "prepared") throw new InvalidDataException();
@@ -155,6 +86,14 @@ public static class FocusedInputProbe
 
     public static void RunHelper()
     {
+        var worker = new Thread(RunHelperCore);
+        worker.SetApartmentState(ApartmentState.MTA);
+        worker.Start();
+        worker.Join();
+    }
+
+    private static void RunHelperCore()
+    {
         Console.InputEncoding = new UTF8Encoding(false);
         Console.OutputEncoding = new UTF8Encoding(false);
         var dispatched = false;
@@ -164,6 +103,11 @@ public static class FocusedInputProbe
             var request = JsonSerializer.Deserialize<NativeProbeRequest>(Console.ReadLine() ?? "") ?? throw new InvalidDataException();
             if (!ProbePolicies.IsSafeText(request.Text)) throw new ProbeRefusal("文字不符合输入条件。");
             var focus = CaptureFocus(request.OriginProcessId);
+            if (request.TargetWindow != 0 && ((long)focus.Window != request.TargetWindow
+                || (int)GetWindowProcess(focus.Window) != request.TargetProcessId))
+                throw new ProbeRefusal("焦点在输入准备期间发生变化。", "focus_changed");
+            if (focus.Backend == "Unicode" && !ProbePolicies.CanUseUnicode(request.Text))
+                throw new ProbeRefusal("当前输入框不支持安全插入换行或制表符，内容已保留。", "multiline_unsupported");
             if (request.Text.Length > 10000)
                 throw new ProbeRefusal("文本超出长度限制，已保留在队列。");
             Send(new("prepared", FocusPid: focus.ProcessId, Backend: focus.Backend));
@@ -179,31 +123,22 @@ public static class FocusedInputProbe
             else
             {
                 var inputList = new List<Native.Input>();
-                for (int i = 0; i < request.Text.Length; i++)
+                foreach (var c in request.Text)
                 {
-                    char c = request.Text[i];
-                    if (c == '\r')
-                    {
-                        if (i + 1 < request.Text.Length && request.Text[i + 1] == '\n') continue;
-                        inputList.Add(Native.Key(0x0D, 0));
-                        inputList.Add(Native.Key(0x0D, 2));
-                    }
-                    else if (c == '\n')
-                    {
-                        inputList.Add(Native.Key(0x0D, 0));
-                        inputList.Add(Native.Key(0x0D, 2));
-                    }
-                    else
-                    {
-                        inputList.Add(Native.Unicode(c, false));
-                        inputList.Add(Native.Unicode(c, true));
-                    }
+                    inputList.Add(Native.Unicode(c, false));
+                    inputList.Add(Native.Unicode(c, true));
                 }
                 dispatched = true;
                 var keys = inputList.ToArray();
                 if (Native.SendInput((uint)keys.Length, keys, Marshal.SizeOf<Native.Input>()) != keys.Length) throw new IOException();
             }
 
+            if (request.AutoEnter)
+            {
+                VerifyFocus(focus, request.OriginProcessId);
+                var enter = new[] { Native.Key(0x0D), Native.Key(0x0D, 2) };
+                if (Native.SendInput(2, enter, Marshal.SizeOf<Native.Input>()) != 2) throw new IOException();
+            }
             if (Native.GetForegroundWindow() == focus.Window)
             {
                 Send(new("done", new("Dispatched", "已派发到当前输入框。", "Untouched", focus.Backend)));
@@ -212,7 +147,7 @@ public static class FocusedInputProbe
 
             Send(new("done", new("Uncertain", "已派发，但目标窗口发生切换；本条不再重发。", "Untouched", focus.Backend)));
         }
-        catch (ProbeRefusal error) { Send(new("done", new(dispatched ? "Uncertain" : "Queued", error.Message, "Untouched"))); }
+        catch (ProbeRefusal error) { Send(new("done", new(dispatched ? "Uncertain" : "Queued", error.Message, "Untouched", FailureCode: error.Code))); }
         catch (Exception error) when (error is IOException or InvalidOperationException or ElementNotAvailableException
             or UnauthorizedAccessException or System.ComponentModel.Win32Exception or COMException or JsonException or ArgumentException)
         { Send(new("done", new(dispatched ? "Uncertain" : "Queued", "Windows 焦点检查或输入未完成，已停止本次操作。", "Untouched"))); }
@@ -222,8 +157,8 @@ public static class FocusedInputProbe
     {
         var window = Native.GetForegroundWindow();
         var thread = Native.GetWindowThreadProcessId(window, out var foregroundPid);
-        if (window == 0 || foregroundPid == 0 || foregroundPid == originPid)
-            throw new ProbeRefusal("请先点入要写入的输入框。");
+        if (window == 0 || foregroundPid == 0 || foregroundPid == originPid || foregroundPid == Environment.ProcessId)
+            throw new ProbeRefusal("请先点入外部应用中要写入的输入框。", "no_target");
 
         var element = AutomationElement.FocusedElement;
         var focusPid = element?.Current.ProcessId ?? (int)foregroundPid;
@@ -253,7 +188,11 @@ public static class FocusedInputProbe
         var nativeEdit = element is not null ? (nint)element.Current.NativeWindowHandle : 0;
         if (nativeEdit == 0 && Native.GetGUIThreadInfo(thread, ref info)) nativeEdit = info.Focus;
 
-        if (nativeEdit != 0)
+        var className = new StringBuilder(256);
+        if (nativeEdit != 0) Native.GetClassNameW(nativeEdit, className, 256);
+        Native.GetWindowThreadProcessId(nativeEdit, out var editPid);
+        var direct = nativeEdit != 0 && ProbePolicies.IsDirectEditTarget(className.ToString(), (int)editPid, focusPid);
+        if (direct)
         {
             var style = Native.GetWindowLongW(nativeEdit, -16);
             if ((style & 0x0020) != 0) isPassword = true;
@@ -261,7 +200,7 @@ public static class FocusedInputProbe
         }
         if (isPassword) throw new ProbeRefusal("密码框已跳过自动输入。");
 
-        var bound = (nativeEdit != 0 && Native.GetAncestor(nativeEdit, 2) == window) || element is not null;
+        var bound = nativeEdit != 0 && Native.GetAncestor(nativeEdit, 2) == window;
         if (!bound && element is not null)
         {
             var root = AutomationElement.FromHandle(window);
@@ -281,10 +220,12 @@ public static class FocusedInputProbe
                 var selections = pattern.GetSelection();
                 hasSelection = selections.Length != 1 || selections[0].CompareEndpoints(TextPatternRangeEndpoint.Start, selections[0], TextPatternRangeEndpoint.End) != 0;
             }
-            catch { }
+            catch (Exception) { throw new ProbeRefusal("无法核对选区，未执行输入。", "selection_unavailable"); }
         }
 
-        var hasTarget = pattern is not null || valPattern is not null || nativeEdit != 0 || element is not null;
+        var hasTarget = ProbePolicies.IsEditableTarget(direct,
+            pattern is not null && !readOnly && element?.Current.IsKeyboardFocusable == true,
+            valPattern is not null && !readOnly && element?.Current.IsKeyboardFocusable == true);
 
         var observation = new TargetObservation((int)foregroundPid, focusPid, bound, isPassword,
             isEnabled, readOnly, hasSelection, ModifiersDown(), ImeComposing(nativeEdit),
@@ -292,33 +233,7 @@ public static class FocusedInputProbe
 
         if (!ProbePolicies.CanInsert(observation)) throw new ProbeRefusal("当前控件、选区、权限或输入状态不符合输入条件。");
 
-        var className = new StringBuilder(256);
-        if (nativeEdit != 0) Native.GetClassNameW(nativeEdit, className, 256);
-        Native.GetWindowThreadProcessId(nativeEdit, out var editPid);
-        var direct = nativeEdit != 0 && ProbePolicies.IsDirectEditTarget(className.ToString(), (int)editPid, focusPid);
-
-        string? original = null;
-        int caret = 0;
-        if (pattern is not null)
-        {
-            try
-            {
-                original = Normalize(pattern.DocumentRange.GetText(100001));
-                if (original.Length <= 100000)
-                {
-                    var selections = pattern.GetSelection();
-                    if (selections.Length == 1)
-                    {
-                        var prefix = pattern.DocumentRange.Clone();
-                        prefix.MoveEndpointByRange(TextPatternRangeEndpoint.End, selections[0], TextPatternRangeEndpoint.Start);
-                        caret = Normalize(prefix.GetText(100001)).Length;
-                    }
-                }
-            }
-            catch { }
-        }
-
-        return new(window, nativeEdit, focusPid, element, original, caret,
+        return new(window, nativeEdit, focusPid, element, null, 0,
             direct ? "EditMessage" : "Unicode");
     }
 
@@ -336,7 +251,8 @@ public static class FocusedInputProbe
                 if (!Automation.Compare(now.Element, before.Element))
                     throw new ProbeRefusal("焦点控件已经变化，未继续输入。");
             }
-            catch { }
+            catch (ProbeRefusal) { throw; }
+            catch (Exception) { throw new ProbeRefusal("无法确认焦点控件未变化。", "focus_changed"); }
         }
         if (before.Original is not null && now.Original is not null)
         {
@@ -360,7 +276,15 @@ public static class FocusedInputProbe
         finally { Native.CloseDesktop(desktop); }
     }
     private static string Normalize(string value) => value.Replace("\r\n", "\n").Replace('\r', '\n');
-    private sealed class ProbeRefusal(string message) : Exception(message);
+    private static uint GetWindowProcess(nint window)
+    {
+        Native.GetWindowThreadProcessId(window, out var pid);
+        return pid;
+    }
+    private sealed class ProbeRefusal(string message, string code = "target_unavailable") : Exception(message)
+    {
+        public string Code { get; } = code;
+    }
 }
 
 internal static class Native

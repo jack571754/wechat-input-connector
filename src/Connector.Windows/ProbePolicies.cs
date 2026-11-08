@@ -6,6 +6,9 @@ public sealed record TargetObservation(int ForegroundProcessId, int FocusedProce
 
 public static class ProbePolicies
 {
+    public static bool IsEditableTarget(bool nativeEdit, bool editableText, bool writableValue)
+        => nativeEdit || editableText || writableValue;
+    public static bool CanUseUnicode(string text) => IsSafeText(text) && !text.Any(c => c is '\r' or '\n' or '\t');
     public static bool IsDirectEditTarget(string className, int processId, int allowedProcessId)
         => processId > 0 && processId == allowedProcessId && (className.Equals("Edit", StringComparison.OrdinalIgnoreCase)
             || className.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase));
