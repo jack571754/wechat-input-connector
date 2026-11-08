@@ -14,7 +14,7 @@ public sealed class ReceiptCoordinator
             if (next is null) return last;
             await ProcessAsync(next.StorageKey, writer, true, ct);
             last = next.StorageKey;
-            if (Snapshot.Events.First(x => x.StorageKey == last).State != EventState.Rejected) return last;
+            if (Snapshot.Events.FirstOrDefault(x => x.StorageKey == last)?.State != EventState.Rejected) return last;
         }
     }
     public void MarkSessionExpired()
@@ -71,6 +71,9 @@ public sealed class ReceiptCoordinator
         && Now - c.ReceivedAt >= TimeSpan.Zero && Now - c.ReceivedAt < TimeSpan.FromMinutes(5);
     private void Commit(ReceiptSnapshot next)
     {
+        next = InboxRetention.Apply(next, Now);
+        if (next.PauseCause == InputPauseCause.OutboxFull && next.Pending.Count(x => !x.Query) < 99)
+            next = next with { InputPaused = false, PauseCause = InputPauseCause.None };
         // 保存成功后才发布新快照；收件、输入完成和发件完成均经过这个短临界区。
         _save(next); _state = next;
         if (_changed.CurrentCount == 0) _changed.Release();
@@ -82,13 +85,20 @@ public sealed class ReceiptCoordinator
     {
         lock (_sync)
         {
-            var next = Prune(_state); var keys = next.Events.Select(x => x.StorageKey).ToHashSet(StringComparer.Ordinal);
+            var next = Prune(_state); var keys = next.Events.Select(x => x.StorageKey)
+                .Concat((next.Seen ?? []).Select(x => x.Key)).ToHashSet(StringComparer.Ordinal);
             var fresh = new List<InboxItem>();
-            foreach (var item in items)
+            foreach (var incoming in items)
             {
+                var item = incoming;
                 if (item.ReasonCode == "bot_echo" || item.Reply is not null && (!IdentityMatches(item.Reply) || item.Reply.SourceMessageId != item.StorageKey)
                     || item.Event is not null && (item.Event.AccountId != _identity.BotId || item.Event.SenderId != _identity.OwnerId)) continue;
                 if (!keys.Add(item.StorageKey)) continue;
+                item = item with { ObservedAt = item.ObservedAt ?? item.Event?.ReceivedAt ?? item.Reply?.ReceivedAt ?? Now,
+                    Identity = item.Event is not null || item.Reply is not null ? _identity : item.Identity };
+                var inboxFull = item.Event is not null && item.Event.Text.Trim() != "/状态"
+                    && next.Events.Count(InboxRetention.IsActive) >= 1000;
+                if (inboxFull) item = item with { State = EventState.Rejected, ReasonCode = "inbox_full", Failure = InputFailure.InboxFull };
                 next = next with { Events = next.Events.Append(item).ToArray(), Connected = true };
                 if (Fresh(item.Reply)) next = next with { LastContext = item.Reply };
                 if (item.Event?.Text.Trim() == "/状态")
@@ -97,6 +107,8 @@ public sealed class ReceiptCoordinator
                     next = Replace(next, query);
                     next = Enqueue(next, query.Reply, "query:" + item.StorageKey, ReceiptFormatter.Status(next), true);
                 }
+                else if (inboxFull)
+                    next = ReceiptFor(next, item, new(EventState.Queued, InputFailure.InboxFull));
                 else if (item.State == EventState.NeedsTranscript)
                     next = ReceiptFor(next, item, new(EventState.NeedsTranscript));
                 else fresh.Add(item);
@@ -128,7 +140,7 @@ public sealed class ReceiptCoordinator
                     : !manual && (item.ReasonCode != "ready" || item.Event.CreatedAt is null
                         || Now - item.Event.CreatedAt > TimeSpan.FromSeconds(15) || item.Event.CreatedAt - Now > TimeSpan.FromSeconds(5)) ? InputFailure.Expired
                     : (InputFailure?)null;
-                if (failure is not null) { Commit(ReceiptFor(_state, item, new(EventState.Queued, failure.Value))); return; }
+                if (failure is not null) { item = item with { Failure = failure }; Commit(ReceiptFor(Replace(_state, item), item, new(EventState.Queued, failure.Value))); return; }
                 ct.ThrowIfCancellationRequested();
                 item = item with { State = EventState.Inserting, InputAttempts = item.InputAttempts + 1, ReasonCode = "inserting" };
                 Commit(Replace(_state, item));
@@ -140,7 +152,7 @@ public sealed class ReceiptCoordinator
                 outcome = new(EventState.Uncertain, InputFailure.Uncertain);
             lock (_sync)
             {
-                item = item with { State = outcome.State, ReasonCode = outcome.State == EventState.Queued ? "ready" : outcome.State.ToString() };
+                item = item with { State = outcome.State, ReasonCode = outcome.State == EventState.Queued ? "ready" : outcome.State.ToString(), Failure = outcome.Failure };
                 var next = Replace(_state, item);
                 Commit(ReceiptFor(next, item, outcome));
             }

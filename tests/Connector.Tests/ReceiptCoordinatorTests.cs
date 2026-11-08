@@ -78,7 +78,6 @@ public sealed class ReceiptCoordinatorTests
     }
 
     [Theory]
-    [InlineData(InputPauseCause.OutboxFull)]
     [InlineData(InputPauseCause.SessionExpired)]
     [InlineData(InputPauseCause.LegacyRecovery)]
     [InlineData(InputPauseCause.TargetNotReady)]

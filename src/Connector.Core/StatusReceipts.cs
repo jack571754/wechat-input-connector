@@ -6,7 +6,7 @@ public sealed record ReplyContext(string AccountId, string OwnerId, string Conte
     public override string ToString() => "微信回复上下文（已隐藏）";
 }
 
-public enum InputFailure { NoInput, Paused, Expired, InvalidText, QueueFull, Uncertain }
+public enum InputFailure { NoInput, Paused, Expired, InvalidText, QueueFull, Uncertain, FocusChanged, TargetUnavailable, MultilineUnsupported, Timeout, StorageFailure, InboxFull }
 public sealed record InputOutcome(EventState State, InputFailure Failure = InputFailure.NoInput, string? Application = null);
 public enum ReceiptDelivery { Sent, Retryable, SessionExpired }
 public enum InputPauseCause { None, OutboxFull, SessionExpired, TargetNotReady, LegacyRecovery, UnknownLegacy }
@@ -18,7 +18,8 @@ public sealed record PendingReceipt(string Id, string ClientId, ReplyContext Rep
 public sealed record ReceiptSnapshot(string? Cursor, IReadOnlyList<InboxItem> Events, IReadOnlyList<PendingReceipt> Pending,
     bool AutoInput = true, bool AutoEnter = false, bool InputPaused = false, long Skipped = 0,
     ReplyContext? LastContext = null, DateTimeOffset? LastSendAt = null, bool Connected = true,
-    InputPauseCause PauseCause = InputPauseCause.None)
+    InputPauseCause PauseCause = InputPauseCause.None, IReadOnlyList<SeenMessage>? Seen = null)
 {
     public override string ToString() => "连接器持久化状态（已隐藏）";
 }
+public sealed record SeenMessage(string Key, DateTimeOffset At);

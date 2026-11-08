@@ -19,6 +19,7 @@ internal sealed class ReceiptSession
     private long _polls;
     private string _phase = "starting";
     private string? _failureType;
+    private DateTimeOffset? _lastPollAt;
 
     public ReceiptSession(string directory, ConnectionState state, bool autoInput, bool autoEnter,
         HttpClient http, ProtocolMetadata metadata, Action<string> report)
@@ -78,15 +79,19 @@ internal sealed class ReceiptSession
             try
             {
                 _phase = "polling";
+                var started = DateTimeOffset.UtcNow;
                 batch = await _client.GetUpdatesAsync(Coordinator.Snapshot.Cursor, ct);
-                failures = 0; _polls++; _failureType = null;
+                failures = 0; _polls++; _failureType = null; _lastPollAt = DateTimeOffset.UtcNow;
+                if (batch.Messages.Count == 0 && DateTimeOffset.UtcNow - started < TimeSpan.FromMilliseconds(250))
+                    await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
             }
             catch (SessionExpiredException) { throw; }
             catch (ILinkException error)
             {
                 _failureType = error.GetType().Name; _phase = "retrying"; PublishDiagnostic();
                 _report("微信连接暂时中断，正在退避重连。");
-                await Task.Delay(TimeSpan.FromSeconds(Math.Min(30, 2 << Math.Min(failures++, 4))), ct);
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(30, 2 << Math.Min(failures++, 4)))
+                    + TimeSpan.FromMilliseconds(Random.Shared.Next(100, 500)), ct);
                 continue;
             }
             if (batch.Messages.Count == 0 && (string.IsNullOrEmpty(batch.NextCursor) || batch.NextCursor == Coordinator.Snapshot.Cursor)) { PublishDiagnostic(); continue; }
@@ -124,13 +129,21 @@ internal sealed class ReceiptSession
     {
         ct.ThrowIfCancellationRequested();
         var result = await FocusedInputProbe.InsertAsync(item.Text, Path.Combine(_directory, "input-recovery.dpapi"), ct, Coordinator.Snapshot.AutoEnter);
-        return new(Enum.TryParse<EventState>(result.State, out var state) ? state : EventState.Uncertain);
+        var failure = result.FailureCode switch
+        {
+            "focus_changed" => InputFailure.FocusChanged,
+            "multiline_unsupported" => InputFailure.MultilineUnsupported,
+            "timeout" => InputFailure.Timeout,
+            "storage" => InputFailure.StorageFailure,
+            _ => result.State == "Uncertain" ? InputFailure.Uncertain : InputFailure.TargetUnavailable
+        };
+        return new(Enum.TryParse<EventState>(result.State, out var state) ? state : EventState.Uncertain, failure);
     }
     private void ReportInput(string key)
     {
-        var item = Coordinator.Snapshot.Events.First(x => x.StorageKey == key);
-        _report(ReceiptFormatter.Input(item, new(item.State,
-            Coordinator.Snapshot.InputPaused || !Coordinator.Snapshot.AutoInput ? InputFailure.Paused : InputFailure.NoInput)));
+        var item = Coordinator.Snapshot.Events.FirstOrDefault(x => x.StorageKey == key);
+        if (item is null) { _report("该记录已按保留规则归档。"); return; }
+        _report(ReceiptFormatter.Input(item, new(item.State, item.Failure ?? InputFailure.NoInput)));
     }
     private async Task<ReceiptDelivery> SendAsync(PendingReceipt receipt, CancellationToken ct)
     {
@@ -150,7 +163,8 @@ internal sealed class ReceiptSession
             Uncertain = state.Events.Count(x => x.State == EventState.Uncertain), state.InputPaused,
             PauseCause = state.PauseCause.ToString(), state.AutoInput, state.AutoEnter,
             PendingReceipts = state.Pending.Count, SentReceiptsThisRun = _sent, SkippedReceipts = state.Skipped,
-            Phase = _phase, CompletedPolls = _polls, FailureType = _failureType });
+            Phase = _phase, CompletedPolls = _polls, FailureType = _failureType,
+            LastSuccessfulPoll = _lastPollAt, Version = typeof(ReceiptSession).Assembly.GetName().Version?.ToString() });
         try
         {
             var path = Path.Combine(_directory, "probe-status.json");

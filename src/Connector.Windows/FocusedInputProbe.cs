@@ -51,13 +51,15 @@ public static class FocusedInputProbe
             try
             {
                 job.Attach(child);
-                await ReadWire(child, TimeSpan.FromSeconds(8), ct);
+                if ((await ReadWire(child, TimeSpan.FromSeconds(8), ct)).Stage != "ready") throw new InvalidDataException();
+                ct.ThrowIfCancellationRequested();
                 await child.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new NativeProbeRequest(text, Environment.ProcessId, autoEnter, (long)targetWindow, (int)targetPid)));
                 var first = await ReadWire(child, TimeSpan.FromMilliseconds(800), ct);
                 if (first.Result is not null) return first.Result;
                 if (first.Stage != "prepared") throw new InvalidDataException();
                 ProtectedFile.Save(recoveryPath, new Recovery("prepared", first.FocusPid, first.Backend, DateTimeOffset.UtcNow));
                 prepared = true;
+                ct.ThrowIfCancellationRequested();
                 await child.StandardInput.WriteLineAsync("saved");
                 var result = (await ReadWire(child, TimeSpan.FromSeconds(3), ct)).Result ?? throw new InvalidDataException();
                 if (result.State is "Verified" or "Dispatched" or "Queued") File.Delete(recoveryPath);
@@ -66,14 +68,15 @@ public static class FocusedInputProbe
             finally
             {
                 if (!child.HasExited) child.Kill(entireProcessTree: true);
-                await child.WaitForExitAsync(CancellationToken.None);
+                await child.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
             }
         }
         catch (Exception error) when (error is IOException or TimeoutException or JsonException or OperationCanceledException
             or System.ComponentModel.Win32Exception or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
         {
             return prepared ? new("Uncertain", "输入结果不明，已保留恢复记录，本条不再重发。", "Untouched")
-                : new("Queued", "焦点探测未完成，未执行输入。", "Untouched");
+                : new("Queued", "焦点探测未完成，未执行输入。", "Untouched", FailureCode:
+                    error is TimeoutException ? "timeout" : error is System.Security.Cryptography.CryptographicException ? "storage" : "target_unavailable");
         }
     }
 
