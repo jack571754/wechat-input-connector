@@ -13,22 +13,22 @@ public static class ReceiptFormatter
         EventState.Uncertain => UncertainText,
         EventState.NeedsTranscript => "本条语音未收到转写文字，未执行输入。",
         EventState.Rejected => "本条文字过长或含不支持的控制字符，未执行输入；已保留记录，补写将跳过本条。",
-        _ => "未执行输入：" + Failure(result.Failure) + "。内容已暂存。"
+        _ => "未执行输入：" + Failure(result.Failure) + "。内容已存入电脑剪贴板，解锁或点击输入框后按 Ctrl+V 即可粘贴。"
     };
 
     public static string Failure(InputFailure failure) => failure switch
-        {
-            InputFailure.Paused => "自动输入已暂停",
-            InputFailure.Expired => "消息不在自动输入时间窗内",
-            InputFailure.InvalidText => "文字不符合自动输入条件",
-            InputFailure.QueueFull => "回执队列已满",
-            InputFailure.FocusChanged => "输入准备期间焦点发生变化",
-            InputFailure.TargetUnavailable => "当前目标不可编辑或无法确认",
-            InputFailure.MultilineUnsupported => "当前输入框无法安全插入换行或制表符",
-            InputFailure.Timeout => "输入准备超时",
-            InputFailure.StorageFailure => "本地状态无法保存",
-            InputFailure.InboxFull => "待输入记录已达到容量上限",
-            _ => "没有可用输入框"
+    {
+        InputFailure.Paused => "自动输入已暂停",
+        InputFailure.Expired => "消息不在自动输入时间窗内",
+        InputFailure.InvalidText => "文字不符合自动输入条件",
+        InputFailure.QueueFull => "回执队列已满",
+        InputFailure.FocusChanged => "输入准备期间焦点发生变化",
+        InputFailure.TargetUnavailable => "当前目标不可编辑或无法确认",
+        InputFailure.MultilineUnsupported => "当前输入框无法安全插入换行或制表符",
+        InputFailure.Timeout => "输入准备超时",
+        InputFailure.StorageFailure => "本地状态无法保存",
+        InputFailure.InboxFull => "待输入记录已达到容量上限",
+        _ => "没有可用输入框"
     };
 
     public static string Status(ReceiptSnapshot state) => $"连接状态：{(state.Connected ? "已连接" : "会话失效")}\n"
