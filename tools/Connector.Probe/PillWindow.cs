@@ -83,6 +83,36 @@ internal sealed class PillWindow : Window
     private static readonly SolidColorBrush DarkBg = new(Colors.White);
     private static readonly SolidColorBrush BorderColor = new(Color.FromRgb(227, 231, 233));
 
+    // Breathing glow drop shadows
+    private readonly DropShadowEffect _cardGlow = new()
+    {
+        Color = Color.FromRgb(7, 193, 96),
+        Direction = 0,
+        ShadowDepth = 0,
+        BlurRadius = 8,
+        Opacity = 0.35,
+        RenderingBias = RenderingBias.Performance
+    };
+    private readonly DropShadowEffect _miniOrbDotGlow = new()
+    {
+        Color = Color.FromRgb(7, 193, 96),
+        Direction = 0,
+        ShadowDepth = 0,
+        BlurRadius = 6,
+        Opacity = 0.8,
+        RenderingBias = RenderingBias.Performance
+    };
+    private readonly DropShadowEffect _statusDotGlow = new()
+    {
+        Color = Color.FromRgb(7, 193, 96),
+        Direction = 0,
+        ShadowDepth = 0,
+        BlurRadius = 5,
+        Opacity = 0.8,
+        RenderingBias = RenderingBias.Performance
+    };
+    private bool _isBreathing = false;
+
     public PillWindow(string directory, TrayManager tray)
     {
         _directory = directory;
@@ -107,23 +137,24 @@ internal sealed class PillWindow : Window
         Topmost = true;
         ShowInTaskbar = false;
         ShowActivated = false;
-        Width = 320;
+        Width = 334;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;
 
         // Position: Top center of primary screen
         var workArea = SystemParameters.WorkArea;
-        Left = (workArea.Width - 320) / 2 + workArea.Left;
-        Top = workArea.Top + 18;
+        Left = (workArea.Width - 334) / 2 + workArea.Left;
+        Top = workArea.Top + 14;
 
         // Outer Card Border
         _cardBorder = new Border
         {
-            CornerRadius = new CornerRadius(22),
+            CornerRadius = new CornerRadius(14),
             Background = DarkBg,
             BorderBrush = BorderColor,
             BorderThickness = new Thickness(1.2),
-            Margin = new Thickness(6)
+            Margin = new Thickness(12),
+            Effect = _cardGlow
         };
 
         var rootGrid = new Grid();
@@ -143,7 +174,8 @@ internal sealed class PillWindow : Window
             Height = 14,
             Fill = GreenBrush,
             HorizontalAlignment = HAlign.Center,
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            Effect = _miniOrbDotGlow
         };
         _miniOrbContent.Children.Add(_miniOrbDot);
 
@@ -180,7 +212,8 @@ internal sealed class PillWindow : Window
             Height = 9,
             Fill = GreenBrush,
             HorizontalAlignment = HAlign.Center,
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            Effect = _statusDotGlow
         };
         Grid.SetColumn(_statusDot, 0);
         pillBar.Children.Add(_statusDot);
@@ -388,10 +421,12 @@ internal sealed class PillWindow : Window
             RegisterGlobalHotkey();
             var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
             source?.AddHook((nint hwnd, int msg, nint w, nint l, ref bool handled) => { if (msg == 0x21) { handled = true; return 3; } return 0; });
+            StartBreathing();
             _ = ConnectAsync(forceLogin: false);
         };
         Closing += (_, _) =>
         {
+            StopBreathing();
             UnregisterGlobalHotkey();
             _session.Cancel();
             _pendingCode?.TrySetCanceled();
@@ -416,8 +451,9 @@ internal sealed class PillWindow : Window
         _isMiniOrb = false;
         _miniOrbContent.Visibility = Visibility.Collapsed;
         _fullPillContent.Visibility = Visibility.Visible;
-        Width = 320;
-        _cardBorder.CornerRadius = new CornerRadius(14); ClampPosition();
+        Width = 334;
+        _cardBorder.CornerRadius = new CornerRadius(14);
+        ClampPosition();
     }
 
     private void CollapseToMiniOrb()
@@ -425,8 +461,9 @@ internal sealed class PillWindow : Window
         _isMiniOrb = true;
         _fullPillContent.Visibility = Visibility.Collapsed;
         _miniOrbContent.Visibility = Visibility.Visible;
-        Width = 48;
-        _cardBorder.CornerRadius = new CornerRadius(19); ClampPosition();
+        Width = 64;
+        _cardBorder.CornerRadius = new CornerRadius(19);
+        ClampPosition();
     }
 
     public void OpenDesktop() => ShowDesktop(false);
@@ -517,6 +554,95 @@ internal sealed class PillWindow : Window
         };
     }
 
+    private void StartBreathing()
+    {
+        if (_isBreathing) return;
+        _isBreathing = true;
+
+        var wechatGreen = Color.FromRgb(7, 193, 96);
+        _cardGlow.Color = wechatGreen;
+        _miniOrbDotGlow.Color = wechatGreen;
+        _statusDotGlow.Color = wechatGreen;
+        _miniOrbDotGlow.Opacity = 0.8;
+        _statusDotGlow.Opacity = 0.8;
+
+        var breathEasing = new SineEase { EasingMode = EasingMode.EaseInOut };
+
+        // Outer Card Shadow breathing: blur expands 8 -> 18, opacity 0.22 -> 0.65
+        var cardBlurAnim = new DoubleAnimation
+        {
+            From = 8.0,
+            To = 18.0,
+            Duration = TimeSpan.FromSeconds(1.8),
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever,
+            EasingFunction = breathEasing
+        };
+        var cardOpacityAnim = new DoubleAnimation
+        {
+            From = 0.22,
+            To = 0.65,
+            Duration = TimeSpan.FromSeconds(1.8),
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever,
+            EasingFunction = breathEasing
+        };
+
+        // Dots Opacity pulse: 1.0 -> 0.40
+        var dotOpacityAnim = new DoubleAnimation
+        {
+            From = 1.0,
+            To = 0.40,
+            Duration = TimeSpan.FromSeconds(1.8),
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever,
+            EasingFunction = breathEasing
+        };
+
+        // Dots Glow Blur breathing: 4 -> 10
+        var dotBlurAnim = new DoubleAnimation
+        {
+            From = 4.0,
+            To = 10.0,
+            Duration = TimeSpan.FromSeconds(1.8),
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever,
+            EasingFunction = breathEasing
+        };
+
+        _cardGlow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, cardBlurAnim);
+        _cardGlow.BeginAnimation(DropShadowEffect.OpacityProperty, cardOpacityAnim);
+
+        _miniOrbDot.BeginAnimation(UIElement.OpacityProperty, dotOpacityAnim);
+        _miniOrbDotGlow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, dotBlurAnim);
+
+        _statusDot.BeginAnimation(UIElement.OpacityProperty, dotOpacityAnim);
+        _statusDotGlow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, dotBlurAnim);
+    }
+
+    private void StopBreathing()
+    {
+        if (!_isBreathing) return;
+        _isBreathing = false;
+
+        _cardGlow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, null);
+        _cardGlow.BeginAnimation(DropShadowEffect.OpacityProperty, null);
+        _miniOrbDot.BeginAnimation(UIElement.OpacityProperty, null);
+        _miniOrbDotGlow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, null);
+        _statusDot.BeginAnimation(UIElement.OpacityProperty, null);
+        _statusDotGlow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, null);
+
+        // Fallback to static neutral drop shadow
+        _cardGlow.Color = Color.FromRgb(140, 150, 160);
+        _cardGlow.BlurRadius = 8;
+        _cardGlow.Opacity = 0.18;
+
+        _miniOrbDot.Opacity = 1.0;
+        _statusDot.Opacity = 1.0;
+        _miniOrbDotGlow.Opacity = 0.0;
+        _statusDotGlow.Opacity = 0.0;
+    }
+
     private void SetStatus(string text, SolidColorBrush dotColor)
     {
         Dispatcher.Invoke(() =>
@@ -524,6 +650,15 @@ internal sealed class PillWindow : Window
             _statusDot.Fill = dotColor;
             _miniOrbDot.Fill = dotColor;
             _statusText.Text = text;
+
+            if (dotColor == GreenBrush)
+            {
+                StartBreathing();
+            }
+            else
+            {
+                StopBreathing();
+            }
         });
     }
 
