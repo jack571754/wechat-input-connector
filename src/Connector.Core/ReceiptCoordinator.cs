@@ -22,7 +22,7 @@ public sealed class ReceiptCoordinator
         lock (_sync)
         {
             if (!_state.Connected) return;
-            Commit(_state with { Pending = [], LastContext = null, Connected = false, InputPaused = true,
+            Commit(_state with { Pending = [], LastContext = null, Connected = false, InputPaused = true, PauseCause = InputPauseCause.SessionExpired,
                 Events = _state.Events.Select(x => x with { Reply = null }).ToArray(), Skipped = _state.Skipped + _state.Pending.Count });
         }
     }
@@ -38,6 +38,15 @@ public sealed class ReceiptCoordinator
     public ReceiptCoordinator(ReceiptSnapshot snapshot, BoundIdentity identity, Action<ReceiptSnapshot> save, TimeProvider? clock = null)
     {
         _identity = identity; _save = save; _clock = clock ?? TimeProvider.System; _state = snapshot;
+        var pauseCause = snapshot.PauseCause;
+        if (snapshot.InputPaused && pauseCause == InputPauseCause.None)
+        {
+            // 旧版未区分阻塞原因：只解除有结果不明记录且无其他阻塞证据的旧暂停。
+            pauseCause = !snapshot.Connected ? InputPauseCause.SessionExpired
+                : snapshot.Pending.Count(x => !x.Query) >= 99 ? InputPauseCause.OutboxFull
+                : snapshot.Events.Any(x => x.State is EventState.Inserting or EventState.Uncertain) ? InputPauseCause.None
+                : InputPauseCause.UnknownLegacy;
+        }
         var recovered = snapshot with
         {
             Events = snapshot.Events.Select(x => x.State == EventState.Inserting ? x with { State = EventState.Uncertain, ReasonCode = "restart_uncertain" } : x).ToArray(),
@@ -47,7 +56,8 @@ public sealed class ReceiptCoordinator
                 NextAttemptAt = x.Sending && x.Attempts > 0 ? Now.AddSeconds(new[] { 2, 5, 15 }[x.Attempts - 1]) : x.NextAttemptAt
             }).ToArray(),
             Skipped = snapshot.Skipped + snapshot.Pending.Count(x => x.Attempts >= 4),
-            InputPaused = snapshot.InputPaused || snapshot.Events.Any(x => x.State is EventState.Inserting or EventState.Uncertain)
+            InputPaused = pauseCause != InputPauseCause.None,
+            PauseCause = pauseCause
         };
         Commit(Prune(recovered));
     }
@@ -128,7 +138,7 @@ public sealed class ReceiptCoordinator
             lock (_sync)
             {
                 item = item with { State = outcome.State, ReasonCode = outcome.State == EventState.Queued ? "ready" : outcome.State.ToString() };
-                var next = Replace(_state, item) with { InputPaused = _state.InputPaused || outcome.State == EventState.Uncertain };
+                var next = Replace(_state, item);
                 Commit(ReceiptFor(next, item, outcome));
             }
         }
@@ -156,9 +166,11 @@ public sealed class ReceiptCoordinator
             if (previous is not null) { pending.Remove(previous); state = state with { Skipped = state.Skipped + 1 }; }
         }
         else if (pending.Count(x => !x.Query) >= 99)
-            return state with { InputPaused = true, Skipped = state.Skipped + 1 };
+            return state with { InputPaused = true, PauseCause = state.PauseCause == InputPauseCause.None ? InputPauseCause.OutboxFull : state.PauseCause, Skipped = state.Skipped + 1 };
         pending.Add(new(id, "wic-" + id, context!, text + "\n编号：" + id[..8], Now, Now, Query: query));
-        return state with { Pending = pending.ToArray(), InputPaused = state.InputPaused || pending.Count(x => !x.Query) >= 99 };
+        var full = pending.Count(x => !x.Query) >= 99;
+        return state with { Pending = pending.ToArray(), InputPaused = state.InputPaused || full,
+            PauseCause = full && state.PauseCause == InputPauseCause.None ? InputPauseCause.OutboxFull : state.PauseCause };
     }
 
     public void SetAutoInput(bool enabled)
@@ -179,7 +191,7 @@ public sealed class ReceiptCoordinator
         {
             if (!_state.InputPaused || _state.Pending.Count(x => !x.Query) >= 99) return;
             clearRecovery?.Invoke();
-            var next = _state with { InputPaused = false,
+            var next = _state with { InputPaused = false, PauseCause = InputPauseCause.None,
                 Events = _state.Events.Select(x => x.State == EventState.Uncertain ? x with { State = EventState.Discarded, ReasonCode = "user_checked" } : x).ToArray() };
             Commit(Enqueue(next, next.LastContext, "resume:" + Guid.NewGuid(), next.AutoInput
                 ? "自动输入已恢复；历史积压不会自动补写。" : "异常暂停已解除，自动输入开关仍关闭。"));
@@ -188,7 +200,8 @@ public sealed class ReceiptCoordinator
     public void ReportSwitch(ReplyContext context, string application, bool activated, bool inputReady)
     {
         var text = ReceiptFormatter.Switch(application, activated, inputReady);
-        lock (_sync) Commit(Enqueue(_state with { InputPaused = _state.InputPaused || !activated || !inputReady }, context,
+        lock (_sync) Commit(Enqueue(_state with { InputPaused = _state.InputPaused || !activated || !inputReady,
+            PauseCause = (!activated || !inputReady) && _state.PauseCause == InputPauseCause.None ? InputPauseCause.TargetNotReady : _state.PauseCause }, context,
             "switch:" + context.SourceMessageId, text));
     }
 

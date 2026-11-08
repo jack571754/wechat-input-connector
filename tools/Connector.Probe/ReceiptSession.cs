@@ -26,14 +26,15 @@ internal sealed class ReceiptSession
         _directory = directory; _persisted = state; _report = report;
         _client = new(http, metadata, state.Account);
         var initial = state.ToRuntime(autoInput, autoEnter);
-        if (File.Exists(Path.Combine(directory, "input-recovery.dpapi")) || File.Exists(Path.Combine(directory, "clipboard-recovery.dpapi")))
-            initial = initial with { InputPaused = true };
+        if (File.Exists(Path.Combine(directory, "clipboard-recovery.dpapi")))
+            initial = initial with { InputPaused = true, PauseCause = InputPauseCause.LegacyRecovery };
         Coordinator = new(initial, new(state.Account.BotId, state.Account.OwnerId), snapshot =>
         {
             var updated = _persisted.WithRuntime(snapshot);
             ProtectedFile.Save(Path.Combine(_directory, "probe-state.dpapi"), updated);
             _persisted = updated;
         });
+        InputRecovery.ArchiveUncertain(Path.Combine(directory, "input-recovery.dpapi"));
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -145,7 +146,9 @@ internal sealed class ReceiptSession
         var json = JsonSerializer.Serialize(new { Status = state.Connected ? "connected" : "session_expired", UpdatedAt = DateTimeOffset.UtcNow,
             Bound = true, FocusMode = "CurrentInput", UniqueMessages = state.Events.Count, ReceivedThisRun = _received,
             Queued = state.Events.Count(x => x.State == EventState.Queued), Verified = state.Events.Count(x => x.State == EventState.Verified),
-            Dispatched = state.Events.Count(x => x.State == EventState.Dispatched), state.InputPaused, state.AutoInput, state.AutoEnter,
+            Dispatched = state.Events.Count(x => x.State == EventState.Dispatched),
+            Uncertain = state.Events.Count(x => x.State == EventState.Uncertain), state.InputPaused,
+            PauseCause = state.PauseCause.ToString(), state.AutoInput, state.AutoEnter,
             PendingReceipts = state.Pending.Count, SentReceiptsThisRun = _sent, SkippedReceipts = state.Skipped,
             Phase = _phase, CompletedPolls = _polls, FailureType = _failureType });
         try

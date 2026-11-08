@@ -9,6 +9,7 @@ public sealed record ReplyContext(string AccountId, string OwnerId, string Conte
 public enum InputFailure { NoInput, Paused, Expired, InvalidText, QueueFull, Uncertain }
 public sealed record InputOutcome(EventState State, InputFailure Failure = InputFailure.NoInput, string? Application = null);
 public enum ReceiptDelivery { Sent, Retryable, SessionExpired }
+public enum InputPauseCause { None, OutboxFull, SessionExpired, TargetNotReady, LegacyRecovery, UnknownLegacy }
 public sealed record PendingReceipt(string Id, string ClientId, ReplyContext Reply, string Text,
     DateTimeOffset CreatedAt, DateTimeOffset NextAttemptAt, int Attempts = 0, bool Query = false, bool Sending = false)
 {
@@ -16,7 +17,8 @@ public sealed record PendingReceipt(string Id, string ClientId, ReplyContext Rep
 }
 public sealed record ReceiptSnapshot(string? Cursor, IReadOnlyList<InboxItem> Events, IReadOnlyList<PendingReceipt> Pending,
     bool AutoInput = true, bool AutoEnter = false, bool InputPaused = false, long Skipped = 0,
-    ReplyContext? LastContext = null, DateTimeOffset? LastSendAt = null, bool Connected = true)
+    ReplyContext? LastContext = null, DateTimeOffset? LastSendAt = null, bool Connected = true,
+    InputPauseCause PauseCause = InputPauseCause.None)
 {
     public override string ToString() => "连接器持久化状态（已隐藏）";
 }

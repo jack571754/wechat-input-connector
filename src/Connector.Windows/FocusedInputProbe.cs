@@ -22,7 +22,9 @@ public static class FocusedInputProbe
     public static async Task<NativeProbeResult> InsertAsync(string text, string recoveryPath, CancellationToken ct, bool autoEnter = false)
     {
         if (!ProbePolicies.IsSafeText(text)) return new("Queued", "文字不符合自动输入条件。", "Untouched");
-        if (File.Exists(recoveryPath)) return new("Uncertain", "存在结果不明的输入记录，自动输入已暂停。", "Untouched");
+        try { InputRecovery.ArchiveUncertain(recoveryPath); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { return new("Queued", "旧输入阶段记录无法归档，本条尚未执行输入。", "Untouched"); }
 
         try
         {
@@ -94,7 +96,7 @@ public static class FocusedInputProbe
                 return new("Dispatched", "已输入到当前输入框。", "Untouched", focus.Backend);
             }
 
-            return new("Uncertain", "已派发，但目标窗口发生切换；自动输入已暂停。", "Untouched", focus.Backend);
+            return new("Uncertain", "已派发，但目标窗口发生切换；本条不再重发。", "Untouched", focus.Backend);
         }
         catch (ProbeRefusal error) { return new(dispatched ? "Uncertain" : "Queued", error.Message, "Untouched"); }
         catch (Exception error) when (error is IOException or InvalidOperationException or ElementNotAvailableException
@@ -139,7 +141,7 @@ public static class FocusedInputProbe
         catch (Exception error) when (error is IOException or TimeoutException or JsonException or OperationCanceledException
             or System.ComponentModel.Win32Exception or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
         {
-            return prepared ? new("Uncertain", "输入结果不明，已暂停并保留恢复记录。", "Untouched")
+            return prepared ? new("Uncertain", "输入结果不明，已保留恢复记录，本条不再重发。", "Untouched")
                 : new("Queued", "焦点探测未完成，未执行输入。", "Untouched");
         }
     }
@@ -228,7 +230,7 @@ public static class FocusedInputProbe
                 return;
             }
 
-            Send(new("done", new("Uncertain", "已派发，但目标窗口发生切换；自动输入已暂停。", "Untouched", focus.Backend)));
+            Send(new("done", new("Uncertain", "已派发，但目标窗口发生切换；本条不再重发。", "Untouched", focus.Backend)));
         }
         catch (ProbeRefusal error) { Send(new("done", new(dispatched ? "Uncertain" : "Queued", error.Message, "Untouched"))); }
         catch (Exception error) when (error is IOException or InvalidOperationException or ElementNotAvailableException

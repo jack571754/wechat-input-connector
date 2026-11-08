@@ -41,14 +41,16 @@ public sealed class ReceiptCoordinatorTests
     }
 
     [Fact]
-    public async Task UncertainPausesFollowingInputAndNeverReplays()
+    public async Task UncertainDoesNotPauseFollowingInputAndNeverReplays()
     {
         var c = Create(); c.CommitBatch(null, [Item(), Item("m2")]); var calls = 0;
         Task<InputOutcome> Write(TextEvent _, CancellationToken ct) { calls++; return Task.FromResult(new InputOutcome(EventState.Uncertain)); }
         await c.ProcessAsync("m1", Write, false, default);
         await c.ProcessAsync("m2", Write, false, default);
         await c.ProcessAsync("m1", Write, true, default);
-        Assert.Equal(1, calls); Assert.True(c.Snapshot.InputPaused);
+        Assert.Equal(2, calls); Assert.False(c.Snapshot.InputPaused);
+        Assert.All(c.Snapshot.Events, x => Assert.Equal(1, x.InputAttempts));
+        Assert.DoesNotContain("已暂停", c.Snapshot.Pending.First().Text);
     }
 
     [Fact]
@@ -56,8 +58,44 @@ public sealed class ReceiptCoordinatorTests
     {
         var c = Create(new(null, [Item() with { State = EventState.Inserting }], [])); var calls = 0;
         await c.ProcessAsync("m1", (_, _) => { calls++; return Verified(null!, default); }, false, default);
-        Assert.True(c.Snapshot.InputPaused); Assert.Equal(0, calls);
+        Assert.False(c.Snapshot.InputPaused); Assert.Equal(0, calls);
         Assert.Equal(EventState.Uncertain, c.Snapshot.Events.Single().State);
+        c.CommitBatch(null, [Item("new")]);
+        await c.ProcessAsync("new", (_, _) => { calls++; return Verified(null!, default); }, false, default);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task LegacyUncertainPauseIsClearedWithoutReplayingOldMessage()
+    {
+        var c = Create(new(null, [Item() with { State = EventState.Uncertain }], [], InputPaused: true));
+        Assert.False(c.Snapshot.InputPaused);
+        var calls = 0;
+        await c.ProcessAsync("m1", (_, _) => { calls++; return Verified(null!, default); }, true, default);
+        Assert.Equal(0, calls);
+        Assert.Equal(EventState.Uncertain, c.Snapshot.Events.Single().State);
+    }
+
+    [Theory]
+    [InlineData(InputPauseCause.OutboxFull)]
+    [InlineData(InputPauseCause.SessionExpired)]
+    [InlineData(InputPauseCause.LegacyRecovery)]
+    [InlineData(InputPauseCause.TargetNotReady)]
+    public async Task UncertainHistoryDoesNotClearAnExplicitDifferentBlock(InputPauseCause cause)
+    {
+        var c = Create(new(null, [Item() with { State = EventState.Uncertain }], [], InputPaused: true, PauseCause: cause));
+        c.CommitBatch(null, [Item("new")]); var calls = 0;
+        await c.ProcessAsync("new", (_, _) => { calls++; return Verified(null!, default); }, false, default);
+        Assert.True(c.Snapshot.InputPaused); Assert.Equal(cause, c.Snapshot.PauseCause); Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task LegacyUncertainMigrationDoesNotEnableUserDisabledAutoInput()
+    {
+        var c = Create(new(null, [Item() with { State = EventState.Uncertain }], [], AutoInput: false, InputPaused: true));
+        c.CommitBatch(null, [Item("new")]); var calls = 0;
+        await c.ProcessAsync("new", (_, _) => { calls++; return Verified(null!, default); }, false, default);
+        Assert.False(c.Snapshot.InputPaused); Assert.False(c.Snapshot.AutoInput); Assert.Equal(0, calls);
     }
 
     [Fact]
@@ -219,12 +257,12 @@ public sealed class ReceiptCoordinatorTests
     [Fact]
     public void RecoveryBarrierMustBeClearedBeforeResumeIsCommitted()
     {
-        var c = Create(new(null, [Item() with { State = EventState.Uncertain }], [], InputPaused: true));
+        var c = Create(new(null, [Item()], [], InputPaused: true));
         Assert.Throws<IOException>(() => c.AcknowledgeUncertain(() => throw new IOException()));
         Assert.True(c.Snapshot.InputPaused);
         var cleared = false; c.AcknowledgeUncertain(() => cleared = true);
         Assert.True(cleared); Assert.False(c.Snapshot.InputPaused);
-        Assert.Equal(EventState.Discarded, c.Snapshot.Events.Single().State);
+        Assert.Equal(EventState.Queued, c.Snapshot.Events.Single().State);
     }
 
     [Fact]

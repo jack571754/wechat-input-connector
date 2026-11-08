@@ -518,7 +518,7 @@ internal sealed class PillWindow : Window
         _live?.Coordinator.SetAutoInput(enabled);
         _autoInput = enabled; _tray.AutoInputEnabled = enabled; SaveSettings();
         _live?.PublishDiagnostic();
-        SetStatus(enabled ? "已开启自动输入；异常暂停需单独解除。" : "自动输入已暂停。", YellowBrush);
+        SetStatus(enabled ? (_live?.Coordinator.Snapshot.InputPaused == true ? "自动输入开关已开启，当前仍有输入阻塞。" : "已开启自动输入。") : "自动输入已暂停。", YellowBrush);
     });
 
     private void ApplyAutoEnter(bool enabled) => UpdateRuntime(() =>
