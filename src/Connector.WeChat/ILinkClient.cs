@@ -24,6 +24,114 @@ public sealed class ILinkClient
         }, true, TimeSpan.FromSeconds(15), ct);
         CheckBusinessResult(doc.RootElement);
     }
+
+    public async Task SendImageAsync(Connector.Core.ReplyContext context, string clientId, byte[] imageBytes, CancellationToken ct)
+    {
+        if (_account is null || context is null || context.AccountId != _account.BotId || context.OwnerId != _account.OwnerId
+            || string.IsNullOrWhiteSpace(context.ContextToken) || string.IsNullOrWhiteSpace(clientId)
+            || clientId.Length > 128 || imageBytes is null || imageBytes.Length == 0 || imageBytes.Length > 10 * 1024 * 1024)
+            throw new ILinkException("回复身份、会话上下文或图片数据无效，未发送图片。");
+
+        var rawsize = imageBytes.Length;
+        var rawfilemd5 = Convert.ToHexStringLower(MD5.HashData(imageBytes));
+
+        var aesKey = RandomNumberGenerator.GetBytes(16);
+        var aesKeyHex = Convert.ToHexStringLower(aesKey);
+        var aesKeyBase64 = Convert.ToBase64String(aesKey);
+
+        using var aes = Aes.Create();
+        aes.Key = aesKey;
+        var encryptedBytes = aes.EncryptEcb(imageBytes, PaddingMode.PKCS7);
+        var filesize = encryptedBytes.Length;
+
+        var filekey = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
+
+        using var uploadDoc = await RequestAsync(HttpMethod.Post, _account.BaseUrl, "ilink/bot/getuploadurl", new
+        {
+            filekey,
+            media_type = 1,
+            to_user_id = _account.OwnerId,
+            rawsize,
+            rawfilemd5,
+            filesize,
+            base_info = BaseInfo()
+        }, true, TimeSpan.FromSeconds(15), ct);
+        CheckBusinessResult(uploadDoc.RootElement);
+
+        var uploadFullUrl = ReadString(uploadDoc.RootElement, "upload_full_url");
+        if (string.IsNullOrWhiteSpace(uploadFullUrl)
+            || !Uri.TryCreate(uploadFullUrl, UriKind.Absolute, out var uploadUri)
+            || uploadUri.Scheme != "https"
+            || !(uploadUri.IdnHost.Equals("weixin.qq.com", StringComparison.OrdinalIgnoreCase)
+                || uploadUri.IdnHost.EndsWith(".weixin.qq.com", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ILinkException("微信未返回有效的文件上传地址。");
+        }
+
+        using var uploadContent = new ByteArrayContent(encryptedBytes);
+        uploadContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        using var cdnRequest = new HttpRequestMessage(HttpMethod.Post, uploadUri) { Content = uploadContent };
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        linked.CancelAfter(TimeSpan.FromSeconds(30));
+        string? encryptQueryParam = null;
+        try
+        {
+            using var cdnResponse = await _http.SendAsync(cdnRequest, HttpCompletionOption.ResponseHeadersRead, linked.Token).ConfigureAwait(false);
+            if (!cdnResponse.IsSuccessStatusCode)
+                throw new ILinkException($"微信图片上传失败（HTTP {(int)cdnResponse.StatusCode}）。");
+
+            if (cdnResponse.Headers.TryGetValues("x-encrypted-param", out var headerVals))
+                encryptQueryParam = headerVals.FirstOrDefault();
+            else if (cdnResponse.Content.Headers.TryGetValues("x-encrypted-param", out var contentHeaderVals))
+                encryptQueryParam = contentHeaderVals.FirstOrDefault();
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new ILinkException("微信图片上传超时，请稍后重试。");
+        }
+        catch (HttpRequestException)
+        {
+            throw new ILinkException("微信网络请求失败，请检查网络连接。");
+        }
+
+        if (string.IsNullOrWhiteSpace(encryptQueryParam))
+            throw new ILinkException("微信图片上传未返回加密参数。");
+
+        using var sendDoc = await RequestAsync(HttpMethod.Post, _account.BaseUrl, "ilink/bot/sendmessage", new
+        {
+            msg = new
+            {
+                from_user_id = "",
+                to_user_id = _account.OwnerId,
+                client_id = clientId,
+                message_type = 2,
+                message_state = 2,
+                context_token = context.ContextToken,
+                item_list = new[]
+                {
+                    new
+                    {
+                        type = 2,
+                        image_item = new
+                        {
+                            filekey,
+                            aeskey = aesKeyHex,
+                            media = new
+                            {
+                                encrypt_query_param = encryptQueryParam.Trim(),
+                                aes_key = aesKeyBase64
+                            },
+                            mid_size = rawsize,
+                            hd_size = rawsize
+                        }
+                    }
+                }
+            },
+            base_info = BaseInfo()
+        }, true, TimeSpan.FromSeconds(15), ct);
+        CheckBusinessResult(sendDoc.RootElement);
+    }
     public static readonly Uri LoginBaseUrl = new("https://ilinkai.weixin.qq.com/");
     private readonly HttpClient _http;
     private readonly ProtocolMetadata _metadata;
