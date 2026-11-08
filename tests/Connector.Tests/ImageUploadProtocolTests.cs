@@ -60,6 +60,8 @@ public sealed class ImageUploadProtocolTests
                 capturedFileKey = fileKey;
 
                 Assert.Equal(ILinkContractTests.Metadata.BotAgent, root.GetProperty("base_info").GetProperty("bot_agent").GetString());
+                Assert.True(root.GetProperty("no_need_thumb").GetBoolean());
+                Assert.Equal(32, root.GetProperty("aeskey").GetString()!.Length);
 
                 return Json("{\"ret\":0,\"upload_full_url\":\"https://novac2c.cdn.weixin.qq.com/test_upload\"}");
             }

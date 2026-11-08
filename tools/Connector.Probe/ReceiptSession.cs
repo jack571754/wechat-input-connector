@@ -153,7 +153,7 @@ internal sealed class ReceiptSession
         ct.ThrowIfCancellationRequested();
         if (FeedbackCommandRouter.IsScreenshotCommand(item.Text))
         {
-            var context = Coordinator.Snapshot.LastContext;
+            var context = Coordinator.Snapshot.Events.FirstOrDefault(x => x.StorageKey == item.MessageId)?.Reply ?? Coordinator.Snapshot.LastContext;
             if (context is null || string.IsNullOrWhiteSpace(context.ContextToken))
             {
                 _report("微信会话凭证已过期，未发送截图。");

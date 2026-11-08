@@ -54,6 +54,11 @@ public sealed class ILinkClient
             rawsize,
             rawfilemd5,
             filesize,
+            thumb_rawsize = 0,
+            thumb_rawfilemd5 = "",
+            thumb_filesize = 0,
+            no_need_thumb = true,
+            aeskey = aesKeyHex,
             base_info = BaseInfo()
         }, true, TimeSpan.FromSeconds(15), ct);
         CheckBusinessResult(uploadDoc.RootElement);
