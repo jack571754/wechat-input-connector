@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="940" viewBox="0 0 1280 940">
+<defs><style>
+text{font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;fill:#202428;font-size:14px}.muted{fill:#667078}.tiny{font-size:12px}.section{font-size:17px;font-weight:600}.h1{font-size:28px;font-weight:600}.green{fill:#08783d}.line{stroke:#e3e7e9;stroke-width:1}.icon{fill:none;stroke:#667078;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+</style></defs>
+<rect width="1280" height="940" fill="#f5f6f7"/>
+<text x="64" y="65" class="h1">微信输入连接器</text><text x="65" y="96" class="muted">桌面交互升级提案　/　2026.11.08</text>
+<rect x="1040" y="44" width="176" height="32" rx="5" fill="#e7ebed"/><text x="1060" y="65" class="tiny muted">设计示意 · 尚未实施</text>
+<text x="64" y="155" class="section">常驻时，安静一点</text>
+<text x="64" y="183" class="muted">点一下展开状态，来消息时不抢走你的光标。</text>
+<circle cx="677" cy="160" r="24" fill="#07c160"/><path d="M669 160h16m-11-5h6m-6 10h6" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+<path d="M725 160h35m-5-4 5 4-5 4" class="icon"/>
+<rect x="792" y="136" width="424" height="48" rx="14" fill="white" stroke="#e3e7e9"/>
+<circle cx="814" cy="160" r="4" fill="#07c160"/><text x="828" y="165">微信已连接</text>
+<path d="M1062 149v22" class="line"/><text x="1080" y="165">历史记录</text><circle cx="1186" cy="160" r="1.5" fill="#667078"/><circle cx="1191" cy="160" r="1.5" fill="#667078"/><circle cx="1196" cy="160" r="1.5" fill="#667078"/>
+<text x="64" y="256" class="section">需要时，看得清楚</text>
+<text x="64" y="284" class="muted">历史只在电脑查看。左边找记录，右边读正文。</text>
+<rect x="64" y="310" width="1152" height="502" rx="8" fill="#fff" stroke="#d5dcdf"/>
+<path d="M64 318q0-8 8-8h1136q8 0 8 8v37H64z" fill="#f0f2f3"/>
+<circle cx="87" cy="333" r="4" fill="#07c160"/><text x="100" y="338" class="tiny">微信输入连接器</text>
+<path d="M1094 333h10m32-5h9v9h-9m38-9 10 10m0-10-10 10" class="icon"/>
+<text x="88" y="388" style="font-weight:600">历史记录</text><text x="198" y="388" class="muted">设置</text><path d="M88 401h57" stroke="#07c160" stroke-width="3"/>
+<text x="1050" y="388" class="tiny muted">只读 · 保存在本机</text><path d="M64 410h1152" class="line"/>
+<path d="M388 410v402" class="line"/>
+<text x="88" y="440" class="tiny muted">今天</text>
+<rect x="76" y="452" width="300" height="86" rx="4" fill="#edf7f1"/><rect x="76" y="466" width="3" height="58" rx="1.5" fill="#07c160"/>
+<text x="94" y="480" class="tiny muted">10:42</text><text x="302" y="480" class="tiny green">已派发</text>
+<text x="94" y="510">把这段想法整理成三个要点。</text>
+<text x="94" y="568" class="tiny muted">10:38</text><text x="302" y="568" class="tiny muted">待输入</text><text x="94" y="598">稍后补充项目背景和使用场景。</text>
+<path d="M94 620h264" class="line"/>
+<text x="94" y="650" class="tiny muted">10:31</text><text x="290" y="650" class="tiny muted">结果不明</text><text x="94" y="680">请帮我检查这一段表达是否清楚。</text>
+<path d="M94 702h264" class="line"/>
+<text x="94" y="732" class="tiny muted">10:25</text><text x="266" y="732" class="tiny muted">缺少语音转写</text><text x="94" y="762" class="muted">未收到语音转写文字</text>
+<text x="424" y="452" class="section">消息正文</text>
+<text x="424" y="483" class="tiny muted">11 月 8 日 10:42</text><text x="562" y="483" class="tiny green">已派发</text>
+<rect x="1080" y="432" width="100" height="34" rx="5" fill="#fff" stroke="#d5dcdf"/><text x="1102" y="454">复制正文</text>
+<path d="M424 506h756" class="line"/>
+<text x="424" y="548" style="font-size:16px">把这段想法整理成三个要点。</text>
+<text x="424" y="589" style="font-size:16px">重点说明使用场景、目前遇到的问题，以及下一步要验证的事情。</text>
+<text x="424" y="630" style="font-size:16px">先保留原意，表达尽量简洁。</text>
+<path d="M424 751h756" class="line"/>
+<text x="424" y="779" class="tiny muted">已派发表示已调用输入操作。查看记录不会补写，也不会重发。</text>
+<text x="88" y="795" class="tiny muted">示例内容，非实际消息</text>
+<text x="64" y="865" style="font-weight:600">不误触</text><text x="64" y="893" class="muted">状态文字只看状态，补写保留快捷键。</text>
+<text x="476" y="865" style="font-weight:600">不打断</text><text x="476" y="893" class="muted">新记录不切走你正在阅读的正文。</text>
+<text x="892" y="865" style="font-weight:600">不堆功能</text><text x="892" y="893" class="muted">首版保留列表、正文和复制。</text>
+</svg>
