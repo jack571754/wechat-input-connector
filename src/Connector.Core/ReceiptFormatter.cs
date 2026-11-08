@@ -8,7 +8,7 @@ public static class ReceiptFormatter
     private static string Target(string? application) => application is "Codex" or "Antigravity" ? application : "当前输入框";
     public static string Input(InboxItem item, InputOutcome result) => result.State switch
     {
-        EventState.Verified => $"已确认写入{Target(result.Application)}，共 {new StringInfo(item.Event?.Text ?? "").LengthInTextElements} 字。",
+        EventState.Verified => result.Application == "屏幕截图" ? "📸 屏幕截图已回传至微信。" : $"已确认写入{Target(result.Application)}，共 {new StringInfo(item.Event?.Text ?? "").LengthInTextElements} 字。",
         EventState.Dispatched => $"已派发到{Target(result.Application)}。",
         EventState.Uncertain => UncertainText,
         EventState.NeedsTranscript => "本条语音未收到转写文字，未执行输入。",

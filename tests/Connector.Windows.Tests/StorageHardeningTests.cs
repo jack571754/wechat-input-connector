@@ -8,6 +8,35 @@ namespace Connector.Windows.Tests;
 public sealed class StorageHardeningTests
 {
     [Fact]
+    public void LegacyRawEncryptedJsonRemainsReadable()
+    {
+        var directory = DirectoryPath(); Directory.CreateDirectory(directory); var path = Path.Combine(directory, "legacy.dpapi");
+        var plain = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new[] { "legacy" });
+        File.WriteAllBytes(path, System.Security.Cryptography.ProtectedData.Protect(plain, null, System.Security.Cryptography.DataProtectionScope.CurrentUser));
+        Assert.Equal(new[] { "legacy" }, ProtectedFile.Load<string[]>(path));
+    }
+
+    [Fact]
+    public void UnknownStorageVersionIsRejectedInsteadOfUsingAnOldSnapshot()
+    {
+        var directory = DirectoryPath(); Directory.CreateDirectory(directory); var path = Path.Combine(directory, "future.dpapi");
+        var plain = System.Text.Encoding.UTF8.GetBytes("{\"Format\":2,\"Payload\":[\"future\"]}");
+        File.WriteAllBytes(path, System.Security.Cryptography.ProtectedData.Protect(plain, null, System.Security.Cryptography.DataProtectionScope.CurrentUser));
+        Assert.Throws<InvalidDataException>(() => ProtectedFile.Load<string[]>(path));
+    }
+
+    [Fact]
+    public void OversizedFileIsRejectedBeforeDecryptingOrAllocatingItsContent()
+    {
+        var directory = DirectoryPath(); Directory.CreateDirectory(directory); var path = Path.Combine(directory, "large.dpapi");
+        try
+        {
+            using (var stream = File.Create(path)) stream.SetLength(32 * 1024 * 1024 + 1);
+            Assert.Throws<InvalidDataException>(() => ProtectedFile.Load<string[]>(path));
+        }
+        finally { File.Delete(path); }
+    }
+    [Fact]
     public void HeldInstanceNeverRunsMigrationStartup()
     {
         var name = "Local\\wic-test-" + Guid.NewGuid();

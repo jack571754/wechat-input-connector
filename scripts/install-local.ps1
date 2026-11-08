@@ -15,7 +15,7 @@ foreach ($sid in @($identitySid, [Security.Principal.SecurityIdentifier]::new('S
     $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
     $privateAcl.AddAccessRule($rule)
 }
-Set-Acl -LiteralPath $profileRoot -AclObject $privateAcl
+[IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($profileRoot), $privateAcl)
 $versionName = '0.2.0-' + (Get-Date -Format 'yyyyMMddHHmmss')
 $destination = Join-Path $profileRoot "bin\$versionName"
 New-Item -ItemType Directory -Path $destination | Out-Null

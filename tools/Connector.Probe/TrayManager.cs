@@ -15,6 +15,7 @@ internal sealed class TrayManager : IDisposable
     public bool AutoEnterEnabled { get; set; }
     public bool TopmostEnabled { get; set; } = true;
     public event Action? ToggleVisibilityRequested;
+    public event Action? ScreenshotRequested;
     public event Action? HistoryRequested;
     public event Action? SettingsRequested;
     public event Action? ExitRequested;
@@ -23,6 +24,7 @@ internal sealed class TrayManager : IDisposable
     {
         _contextMenu = new ContextMenuStrip();
         _contextMenu.Items.Add(new ToolStripMenuItem("历史记录", null, (_, _) => HistoryRequested?.Invoke()));
+        _contextMenu.Items.Add(new ToolStripMenuItem("📸 截取屏幕发微信", null, (_, _) => ScreenshotRequested?.Invoke()));
         _contextMenu.Items.Add(new ToolStripMenuItem("设置", null, (_, _) => SettingsRequested?.Invoke()));
         _contextMenu.Items.Add(new ToolStripMenuItem("显示 / 隐藏悬浮窗", null, (_, _) => ToggleVisibilityRequested?.Invoke()));
         _contextMenu.Items.Add(new ToolStripSeparator());

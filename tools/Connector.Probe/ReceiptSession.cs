@@ -125,9 +125,54 @@ internal sealed class ReceiptSession
         PublishDiagnostic();
     }
 
+    public async Task<bool> SendScreenshotToWeChatAsync(CancellationToken ct = default)
+    {
+        var context = Coordinator.Snapshot.LastContext;
+        if (context is null || string.IsNullOrWhiteSpace(context.ContextToken))
+        {
+            _report("微信会话凭证已过期，请在手机微信发任意文字激活后再试。");
+            return false;
+        }
+        try
+        {
+            var jpeg = ScreenCapture.CapturePrimaryScreenToJpeg(75);
+            var clientId = "manual-shot-" + Guid.NewGuid().ToString("N");
+            await _client.SendImageAsync(context, clientId, jpeg, ct);
+            _report("📸 已截取屏幕并回传微信。");
+            return true;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _report("截屏发送微信失败：" + error.Message);
+            return false;
+        }
+    }
+
     private async Task<InputOutcome> WriteAsync(TextEvent item, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        if (FeedbackCommandRouter.IsScreenshotCommand(item.Text))
+        {
+            var context = Coordinator.Snapshot.LastContext;
+            if (context is null || string.IsNullOrWhiteSpace(context.ContextToken))
+            {
+                _report("微信会话凭证已过期，未发送截图。");
+                return new(EventState.Queued, InputFailure.Expired);
+            }
+            try
+            {
+                var jpeg = ScreenCapture.CapturePrimaryScreenToJpeg(75);
+                var clientId = "shot-" + Guid.NewGuid().ToString("N");
+                await _client.SendImageAsync(context, clientId, jpeg, ct);
+                _report("📸 已截取当前屏幕并回传微信。");
+                return new(EventState.Verified, Application: "屏幕截图");
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _report("截屏发送微信失败：" + error.Message);
+                return new(EventState.Uncertain, InputFailure.Uncertain);
+            }
+        }
         var result = await FocusedInputProbe.InsertAsync(item.Text, Path.Combine(_directory, "input-recovery.dpapi"), ct, Coordinator.Snapshot.AutoEnter);
         return result.ToOutcome();
     }

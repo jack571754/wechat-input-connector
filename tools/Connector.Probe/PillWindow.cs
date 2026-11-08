@@ -330,6 +330,7 @@ internal sealed class PillWindow : Window
         });
 
         _tray.HistoryRequested += () => Dispatcher.Invoke(() => ShowDesktop(false));
+        _tray.ScreenshotRequested += () => Dispatcher.Invoke(() => _ = TriggerScreenshotAsync());
         _tray.SettingsRequested += () => Dispatcher.Invoke(() => ShowDesktop(true));
         _tray.ExitRequested += () => Dispatcher.Invoke(() =>
         {
@@ -413,6 +414,7 @@ internal sealed class PillWindow : Window
         var menu = new ContextMenu();
         void Add(string title, Action action) { var item = new MenuItem { Header = title }; item.Click += (_, _) => action(); menu.Items.Add(item); }
         Add("历史记录", () => ShowDesktop(false));
+        Add("📸 截取屏幕发微信", () => _ = TriggerScreenshotAsync());
         Add("设置", () => ShowDesktop(true));
         Add("隐藏悬浮窗", Hide);
         menu.Items.Add(new Separator());
@@ -572,6 +574,31 @@ internal sealed class PillWindow : Window
         finally { _live = null; }
     }
 
+    private async Task TriggerScreenshotAsync()
+    {
+        if (_live is null)
+        {
+            SetStatus("未连接微信", GrayBrush);
+            if (_isMiniOrb) ExpandToPill();
+            _collapseTimer.Stop();
+            _collapseTimer.Start();
+            return;
+        }
+        SetStatus("📸 正在截屏并上传微信…", GreenBrush);
+        if (_isMiniOrb) ExpandToPill();
+        var success = await _live.SendScreenshotToWeChatAsync(CancellationToken.None);
+        if (success)
+        {
+            SetStatus("📸 已截屏并回传微信", GreenBrush);
+        }
+        else
+        {
+            SetStatus("微信凭证已过期，请在手机发消息激活", GrayBrush);
+        }
+        _collapseTimer.Stop();
+        _collapseTimer.Start();
+    }
+
     private void ReportSessionStatus(string text)
     {
         if (Dispatcher.HasShutdownStarted) return;
@@ -579,6 +606,9 @@ internal sealed class PillWindow : Window
         {
             if (!IsLoaded) return;
             SetStatus(text, GreenBrush);
+            if (_isMiniOrb) ExpandToPill();
+            _collapseTimer.Stop();
+            _collapseTimer.Start();
         });
     }
 
