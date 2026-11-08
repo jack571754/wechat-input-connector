@@ -22,7 +22,9 @@ using ProbeState = Connector.WeChat.ConnectionState;
 using Connector.WeChat;
 using Connector.Windows;
 using QRCoder;
+using Wpf.Ui.Controls;
 using Button = System.Windows.Controls.Button;
+using TextBlock = System.Windows.Controls.TextBlock;
 using TextBox = System.Windows.Controls.TextBox;
 using Image = System.Windows.Controls.Image;
 using ContextMenu = System.Windows.Controls.ContextMenu;
@@ -455,15 +457,25 @@ internal sealed class PillWindow : Window
     {
         _collapseTimer.Stop();
         var menu = new ContextMenu();
-        void Add(string title, Action action) { var item = new MenuItem { Header = title }; item.Click += (_, _) => action(); menu.Items.Add(item); }
-        Add("历史记录", () => ShowDesktop(false));
-        Add("📸 截取屏幕发微信", () => _ = TriggerScreenshotAsync());
-        Add("设置", () => ShowDesktop(true));
-        Add("隐藏悬浮窗", Hide);
+        void Add(string title, SymbolRegular symbol, Action action)
+        {
+            var item = new MenuItem
+            {
+                Header = title,
+                Icon = new SymbolIcon { Symbol = symbol, FontSize = 16 }
+            };
+            item.Click += (_, _) => action();
+            menu.Items.Add(item);
+        }
+        Add("消息历史", SymbolRegular.History24, () => ShowDesktop(false));
+        Add("截取屏幕发微信", SymbolRegular.Camera24, () => _ = TriggerScreenshotAsync());
+        Add("连接与设置", SymbolRegular.Settings24, () => ShowDesktop(true));
+        Add("隐藏悬浮窗", SymbolRegular.EyeOff24, Hide);
         menu.Items.Add(new Separator());
-        Add("退出连接器", Close);
+        Add("退出连接器", SymbolRegular.SignOut24, Close);
         menu.Closed += (_, _) => _collapseTimer.Start();
-        menu.PlacementTarget = target; menu.IsOpen = true;
+        menu.PlacementTarget = target;
+        menu.IsOpen = true;
     }
 
     private string VaultPath => System.IO.Path.Combine(_directory, "probe-state.dpapi");
