@@ -34,6 +34,7 @@ using Brushes = System.Windows.Media.Brushes;
 using FontFamily = System.Windows.Media.FontFamily;
 using Cursors = System.Windows.Input.Cursors;
 using HAlign = System.Windows.HorizontalAlignment;
+using Point = System.Windows.Point;
 
 namespace Connector.Probe;
 
@@ -52,9 +53,11 @@ internal sealed class PillWindow : Window
     private readonly SemaphoreSlim _connectTransition = new(1, 1);
     private Task _connectionTask = Task.CompletedTask;
     private bool _autoInput = true;
-    private bool _autoEnter = true;
+    private bool _autoEnter = false;
     private bool _isMiniOrb = false;
-    private SettingsWindow? _settingsWindow;
+    private DesktopWindow? _desktopWindow;
+    private Point? _dragStart;
+    private bool _dragged;
     private readonly DispatcherTimer _collapseTimer;
 
     // UI elements
@@ -74,8 +77,8 @@ internal sealed class PillWindow : Window
 
     private static readonly SolidColorBrush GreenBrush = new(Color.FromRgb(7, 193, 96));
     private static readonly SolidColorBrush GrayBrush = new(Color.FromRgb(142, 142, 147));
-    private static readonly SolidColorBrush DarkBg = new(Color.FromArgb(242, 26, 26, 28));
-    private static readonly SolidColorBrush BorderColor = new(Color.FromArgb(120, 75, 75, 80));
+    private static readonly SolidColorBrush DarkBg = new(Colors.White);
+    private static readonly SolidColorBrush BorderColor = new(Color.FromRgb(227, 231, 233));
 
     public PillWindow(string directory, TrayManager tray)
     {
@@ -100,13 +103,14 @@ internal sealed class PillWindow : Window
         Background = Brushes.Transparent;
         Topmost = true;
         ShowInTaskbar = false;
-        Width = 390;
+        ShowActivated = false;
+        Width = 320;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;
 
         // Position: Top center of primary screen
         var workArea = SystemParameters.WorkArea;
-        Left = (workArea.Width - 390) / 2 + workArea.Left;
+        Left = (workArea.Width - 320) / 2 + workArea.Left;
         Top = workArea.Top + 18;
 
         // Outer Card Border
@@ -116,13 +120,6 @@ internal sealed class PillWindow : Window
             Background = DarkBg,
             BorderBrush = BorderColor,
             BorderThickness = new Thickness(1.2),
-            Effect = new DropShadowEffect
-            {
-                BlurRadius = 18,
-                ShadowDepth = 3,
-                Opacity = 0.45,
-                Color = Colors.Black
-            },
             Margin = new Thickness(6)
         };
 
@@ -135,14 +132,13 @@ internal sealed class PillWindow : Window
             Height = 36,
             Visibility = Visibility.Collapsed,
             Cursor = Cursors.Hand,
-            ToolTip = "微信输入连接器 · 单击展开 / 右键设置 (可拖拽)"
+            ToolTip = "微信输入连接器 · 单击展开，可拖动"
         };
         _miniOrbDot = new Ellipse
         {
             Width = 14,
             Height = 14,
             Fill = GreenBrush,
-            Effect = new DropShadowEffect { Color = Color.FromRgb(7, 193, 96), BlurRadius = 10, ShadowDepth = 0, Opacity = 0.8 },
             HorizontalAlignment = HAlign.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -150,18 +146,18 @@ internal sealed class PillWindow : Window
 
         _miniOrbContent.MouseLeftButtonDown += (_, e) =>
         {
-            if (e.ButtonState == MouseButtonState.Pressed) DragMove();
+            _dragStart = e.GetPosition(this); _dragged = false;
         };
         _miniOrbContent.MouseLeftButtonUp += (_, _) =>
         {
-            ExpandToPill();
+            if (!_dragged) ExpandToPill();
             _collapseTimer.Start();
         };
-        _miniOrbContent.MouseRightButtonUp += (_, _) => ShowSettingsDialog();
+        _miniOrbContent.MouseRightButtonUp += (_, _) => ShowMoreMenu(_miniOrbContent);
         rootGrid.Children.Add(_miniOrbContent);
 
         // 2. Full Pill Content (Visible when expanded)
-        _fullPillContent = new StackPanel { Width = 376 };
+        _fullPillContent = new StackPanel { Width = 306 };
 
         var pillBar = new Grid { Height = 44, Cursor = Cursors.Hand };
         pillBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
@@ -170,9 +166,9 @@ internal sealed class PillWindow : Window
 
         pillBar.MouseLeftButtonDown += (_, e) =>
         {
-            if (e.ButtonState == MouseButtonState.Pressed) DragMove();
+            _dragStart = e.GetPosition(this); _dragged = false;
         };
-        pillBar.MouseRightButtonUp += (_, _) => ShowSettingsDialog();
+        pillBar.MouseRightButtonUp += (_, _) => ShowMoreMenu(pillBar);
 
         // Status Indicator Dot
         _statusDot = new Ellipse
@@ -190,15 +186,15 @@ internal sealed class PillWindow : Window
         _statusText = new TextBlock
         {
             Text = "正在连接微信…",
-            Foreground = new SolidColorBrush(Color.FromRgb(240, 240, 245)),
+            Foreground = new SolidColorBrush(Color.FromRgb(32, 36, 40)),
             FontSize = 12.5,
             FontFamily = new FontFamily("Microsoft YaHei UI, Segoe UI"),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            ToolTip = "点击可补写最新文字到当前光标处",
+            ToolTip = "连接与派发状态；Ctrl+Alt+V 补写下一条待输入消息",
             Margin = new Thickness(0, 0, 8, 0)
         };
-        _statusText.MouseLeftButtonUp += async (_, _) => await TriggerManualReplayAsync();
+
         Grid.SetColumn(_statusText, 1);
         pillBar.Children.Add(_statusText);
 
@@ -207,14 +203,15 @@ internal sealed class PillWindow : Window
 
         _replayBtn = CreateIconButton("↵", "补写到当前光标 (Ctrl+Alt+V)");
         _replayBtn.Click += async (_, _) => await TriggerManualReplayAsync();
-        actionsPanel.Children.Add(_replayBtn);
 
-        var settingsBtn = CreateIconButton("⚙", "偏好设置");
-        settingsBtn.Click += (_, _) => ShowSettingsDialog();
+
+        var settingsBtn = CreateIconButton("历史", "查看历史记录");
+        settingsBtn.Width = 40;
+        settingsBtn.Click += (_, _) => ShowDesktop(false);
         actionsPanel.Children.Add(settingsBtn);
 
-        _minimizeBtn = CreateIconButton("—", "缩小为微型悬浮珠");
-        _minimizeBtn.Click += (_, _) => CollapseToMiniOrb();
+        _minimizeBtn = CreateIconButton("⋯", "更多操作");
+        _minimizeBtn.Click += (_, _) => ShowMoreMenu(_minimizeBtn);
         actionsPanel.Children.Add(_minimizeBtn);
 
         Grid.SetColumn(actionsPanel, 2);
@@ -295,13 +292,21 @@ internal sealed class PillWindow : Window
         drawerStack.Children.Add(verifyRow);
 
         _drawer.Child = drawerStack;
-        _fullPillContent.Children.Add(_drawer);
+
 
         rootGrid.Children.Add(_fullPillContent);
         _cardBorder.Child = rootGrid;
         Content = _cardBorder;
 
         // Mouse hover pause on full pill
+        MouseMove += (_, e) =>
+        {
+            if (_dragStart is not { } start || e.LeftButton != MouseButtonState.Pressed || _dragged) return;
+            var position = e.GetPosition(this);
+            if (Math.Abs(position.X - start.X) < SystemParameters.MinimumHorizontalDragDistance && Math.Abs(position.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+            _dragged = true;
+            try { DragMove(); ClampPosition(); SaveSettings(); } catch (InvalidOperationException) { }
+        };
         MouseEnter += (_, _) => _collapseTimer.Stop();
         MouseLeave += (_, _) =>
         {
@@ -320,34 +325,12 @@ internal sealed class PillWindow : Window
             else
             {
                 Show();
-                Activate();
                 ExpandToPill();
             }
         });
 
-        _tray.AutoInputChanged += enabled => Dispatcher.Invoke(() =>
-        {
-            ApplyAutoInput(enabled);
-        });
-
-        _tray.AutoEnterChanged += enabled => Dispatcher.Invoke(() =>
-        {
-            ApplyAutoEnter(enabled);
-        });
-
-        _tray.TopmostChanged += top => Dispatcher.Invoke(() =>
-        {
-            Topmost = top;
-            SaveSettings();
-        });
-
-        _tray.ReviewedInputRequested += () => UpdateRuntime(() =>
-        {
-            _live?.ReviewAndResume();
-            _live?.PublishDiagnostic();
-            SetStatus(_live?.Coordinator.Snapshot.InputPaused == true ? "仍处于暂停状态，请先处理回执队列。" : "已解除异常暂停，历史内容不会自动补写。", GreenBrush);
-        });
-        _tray.ReconnectRequested += () => Dispatcher.Invoke(async () => await ConnectAsync(forceLogin: true));
+        _tray.HistoryRequested += () => Dispatcher.Invoke(() => ShowDesktop(false));
+        _tray.SettingsRequested += () => Dispatcher.Invoke(() => ShowDesktop(true));
         _tray.ExitRequested += () => Dispatcher.Invoke(() =>
         {
             System.Windows.Application.Current?.Shutdown();
@@ -361,6 +344,8 @@ internal sealed class PillWindow : Window
         Loaded += (_, _) =>
         {
             RegisterGlobalHotkey();
+            var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+            source?.AddHook((nint hwnd, int msg, nint w, nint l, ref bool handled) => { if (msg == 0x21) { handled = true; return 3; } return 0; });
             _ = ConnectAsync(forceLogin: false);
         };
         Closing += (_, _) =>
@@ -369,9 +354,19 @@ internal sealed class PillWindow : Window
             _session.Cancel();
             _pendingCode?.TrySetCanceled();
             _tray.Dispose();
-            _settingsWindow?.Close();
+            _desktopWindow?.Close();
+            _collapseTimer.Stop();
+            _http.Dispose();
             System.Windows.Application.Current?.Shutdown();
         };
+    }
+
+    private void ClampPosition()
+    {
+        // WPF 使用 DIP；虚拟桌面边界用于避免窗口在显示器配置变化后完全离屏。
+        var left = SystemParameters.VirtualScreenLeft; var top = SystemParameters.VirtualScreenTop;
+        Left = Math.Clamp(Left, left, Math.Max(left, left + SystemParameters.VirtualScreenWidth - Width));
+        Top = Math.Clamp(Top, top, Math.Max(top, top + SystemParameters.VirtualScreenHeight - 64));
     }
 
     private void ExpandToPill()
@@ -379,8 +374,8 @@ internal sealed class PillWindow : Window
         _isMiniOrb = false;
         _miniOrbContent.Visibility = Visibility.Collapsed;
         _fullPillContent.Visibility = Visibility.Visible;
-        Width = 390;
-        _cardBorder.CornerRadius = new CornerRadius(22);
+        Width = 320;
+        _cardBorder.CornerRadius = new CornerRadius(14); ClampPosition();
     }
 
     private void CollapseToMiniOrb()
@@ -389,47 +384,39 @@ internal sealed class PillWindow : Window
         _fullPillContent.Visibility = Visibility.Collapsed;
         _miniOrbContent.Visibility = Visibility.Visible;
         Width = 48;
-        _cardBorder.CornerRadius = new CornerRadius(19);
+        _cardBorder.CornerRadius = new CornerRadius(19); ClampPosition();
     }
 
-    private void ShowSettingsDialog()
+    private void ShowDesktop(bool settings)
     {
-        if (_settingsWindow is not null && _settingsWindow.IsVisible)
+        if (_desktopWindow is null)
         {
-            _settingsWindow.Activate();
-            return;
+            if (_drawer.Parent is System.Windows.Controls.Panel parent) parent.Children.Remove(_drawer);
+            _desktopWindow = new DesktopWindow(
+                () => _state is null ? [] : InputHistory.Read(_live?.Coordinator.Snapshot ?? _state.ToRuntime(_autoInput, _autoEnter), new(_state.Account.BotId, _state.Account.OwnerId)),
+                () => (_autoInput, _autoEnter, Topmost, _statusText.Text), ApplyAutoInput, ApplyAutoEnter,
+                value => { Topmost = value; _tray.TopmostEnabled = value; SaveSettings(); },
+                () => _ = ConnectAsync(forceLogin: true), _drawer);
+            _desktopWindow.Closed += (_, _) => _desktopWindow = null;
         }
+        _desktopWindow.SelectPage(settings);
+        _desktopWindow.Show();
+        if (_desktopWindow.WindowState == WindowState.Minimized) _desktopWindow.WindowState = WindowState.Normal;
+        _desktopWindow.Activate();
+    }
 
-        _settingsWindow = new SettingsWindow(
-            _directory,
-            _tray,
-            _autoInput,
-            _autoEnter,
-            Topmost,
-            _state?.Account?.OwnerId ?? "",
-            onAutoInputChanged: val =>
-            {
-                ApplyAutoInput(val);
-            },
-            onAutoEnterChanged: val =>
-            {
-                ApplyAutoEnter(val);
-            },
-            onTopmostChanged: val =>
-            {
-                Topmost = val;
-                _tray.TopmostEnabled = val;
-                SaveSettings();
-            },
-            onReconnect: () => _ = ConnectAsync(forceLogin: true),
-            onExit: () => Close()
-        );
-
-        // Place near the pill / orb
-        _settingsWindow.Left = Left + (Width - 330) / 2;
-        _settingsWindow.Top = Top + 50;
-        _settingsWindow.Closed += (_, _) => _settingsWindow = null;
-        _settingsWindow.Show();
+    private void ShowMoreMenu(FrameworkElement target)
+    {
+        _collapseTimer.Stop();
+        var menu = new ContextMenu();
+        void Add(string title, Action action) { var item = new MenuItem { Header = title }; item.Click += (_, _) => action(); menu.Items.Add(item); }
+        Add("历史记录", () => ShowDesktop(false));
+        Add("设置", () => ShowDesktop(true));
+        Add("隐藏悬浮窗", Hide);
+        menu.Items.Add(new Separator());
+        Add("退出连接器", Close);
+        menu.Closed += (_, _) => _collapseTimer.Start();
+        menu.PlacementTarget = target; menu.IsOpen = true;
     }
 
     private string VaultPath => System.IO.Path.Combine(_directory, "probe-state.dpapi");
@@ -462,7 +449,12 @@ internal sealed class PillWindow : Window
         });
     }
 
-    private sealed record PillSettings(bool AutoInput = true, bool AutoEnter = true, bool Topmost = true);
+    private sealed record PillSettings(bool AutoInput = true, bool AutoEnter = false, bool Topmost = true, double? Left = null, double? Top = null)
+    {
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public Dictionary<string, JsonElement>? Extra { get; init; }
+    }
+    private PillSettings? _savedSettings;
 
     private void LoadSettings()
     {
@@ -474,9 +466,11 @@ internal sealed class PillWindow : Window
                 var s = JsonSerializer.Deserialize<PillSettings>(File.ReadAllText(path));
                 if (s is not null)
                 {
+                    _savedSettings = s;
                     _autoInput = s.AutoInput;
                     _autoEnter = s.AutoEnter;
                     Topmost = s.Topmost;
+                    if (s.Left is { } left && s.Top is { } top) { Left = left; Top = top; ClampPosition(); }
                     _tray.AutoInputEnabled = _autoInput;
                     _tray.AutoEnterEnabled = _autoEnter;
                     _tray.TopmostEnabled = Topmost;
@@ -493,9 +487,11 @@ internal sealed class PillWindow : Window
         try
         {
             var path = System.IO.Path.Combine(_directory, "settings.json");
-            File.WriteAllText(path, JsonSerializer.Serialize(new PillSettings(_autoInput, _autoEnter, Topmost)));
+            var updated = new PillSettings(_autoInput, _autoEnter, Topmost, Left, Top) { Extra = _savedSettings?.Extra };
+            File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(updated));
+            File.Move(path + ".tmp", path, true); _savedSettings = updated;
         }
-        catch { }
+        catch (Exception) { SetStatus("设置未能保存，重启后可能恢复原值。", GreenBrush); }
     }
 
     private void UpdateRuntime(Action action)
@@ -548,7 +544,7 @@ internal sealed class PillWindow : Window
             if (File.Exists(VaultPath)) _state = ProtectedFile.Load<ProbeState>(VaultPath);
             if (forceLogin || _state is null)
             {
-                ExpandToPill(); SetStatus("请扫码连接微信…", GreenBrush);
+                ShowDesktop(true); SetStatus("请扫码连接微信…", GreenBrush);
                 _drawer.Visibility = Visibility.Visible;
                 var login = new QrLogin(new(_http, _metadata), RequestVerifyCodeAsync);
                 var result = await login.RunAsync(new Progress<LoginProgress>(OnLoginProgress), token);
@@ -565,7 +561,7 @@ internal sealed class PillWindow : Window
         catch (SessionExpiredException)
         {
             SetStatus("微信会话失效，收发已停止，请重新扫码。", GrayBrush);
-            _drawer.Visibility = Visibility.Visible;
+            _drawer.Visibility = Visibility.Visible; ShowDesktop(true);
         }
         catch (Exception)
         {
@@ -580,7 +576,7 @@ internal sealed class PillWindow : Window
         Dispatcher.BeginInvoke(() =>
         {
             if (!IsLoaded) return;
-            ExpandToPill(); SetStatus(text, GreenBrush); _collapseTimer.Start();
+            SetStatus(text, GreenBrush);
         });
     }
 
