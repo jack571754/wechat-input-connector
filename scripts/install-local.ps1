@@ -1,4 +1,4 @@
-# 安装已经发布的独立版本，不删除旧程序和旧数据。
+﻿# 安装已经发布的独立版本，不删除旧程序和旧数据。
 param([string]$PublishedDirectory = '', [string]$MigrateFrom = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -15,7 +15,11 @@ foreach ($sid in @($identitySid, [Security.Principal.SecurityIdentifier]::new('S
     $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
     $privateAcl.AddAccessRule($rule)
 }
-[IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($profileRoot), $privateAcl)
+if ([Type]::GetType('System.IO.FileSystemAclExtensions, System.IO.FileSystem.AccessControl')) {
+    [IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($profileRoot), $privateAcl)
+} else {
+    Set-Acl -LiteralPath $profileRoot -AclObject $privateAcl
+}
 $versionName = '0.2.0-' + (Get-Date -Format 'yyyyMMddHHmmss')
 $destination = Join-Path $profileRoot "bin\$versionName"
 New-Item -ItemType Directory -Path $destination | Out-Null
@@ -32,3 +36,5 @@ Set-Content -LiteralPath (Join-Path $profileRoot 'current-version.txt.tmp') -Val
 Move-Item -LiteralPath (Join-Path $profileRoot 'current-version.txt.tmp') -Destination (Join-Path $profileRoot 'current-version.txt') -Force
 Start-Process -FilePath (Join-Path $destination 'Connector.Probe.exe') -ArgumentList $arguments -WindowStyle Normal
 Write-Output "已安装本地版本 $versionName"
+
+
