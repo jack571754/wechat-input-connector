@@ -7,6 +7,7 @@ $PublishedDirectory = [IO.Path]::GetFullPath($PublishedDirectory)
 if (-not (Test-Path -LiteralPath (Join-Path $PublishedDirectory 'Connector.Probe.exe'))) { throw '请先发布自包含版本。' }
 $profileRoot = Join-Path $env:LOCALAPPDATA 'WeChatInputConnector'
 New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
+if ((Get-Item -LiteralPath $profileRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw '安装目录不允许使用链接。' }
 $identitySid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $privateAcl = [Security.AccessControl.DirectorySecurity]::new()
 $privateAcl.SetAccessRuleProtection($true, $false)
@@ -18,7 +19,7 @@ Set-Acl -LiteralPath $profileRoot -AclObject $privateAcl
 $versionName = '0.2.0-' + (Get-Date -Format 'yyyyMMddHHmmss')
 $destination = Join-Path $profileRoot "bin\$versionName"
 New-Item -ItemType Directory -Path $destination | Out-Null
-Get-ChildItem -LiteralPath $PublishedDirectory -File | Copy-Item -Destination $destination
+Get-ChildItem -LiteralPath $PublishedDirectory | Copy-Item -Destination $destination -Recurse
 $hashes = Get-ChildItem -LiteralPath $destination -File | Get-FileHash -Algorithm SHA256
 $hashes | Select-Object @{Name='File';Expression={Split-Path $_.Path -Leaf}}, Hash | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'sha256.json') -Encoding utf8
 $arguments = '--show-history'

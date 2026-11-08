@@ -11,7 +11,7 @@ jobs:
         with:
           global-json-file: global.json
       - name: Restore locked dependencies
-        run: dotnet restore WeChatInputConnector.sln --locked-mode
+        run: dotnet restore WeChatInputConnector.sln --locked-mode -r win-x64
       - name: Audit dependencies
         shell: pwsh
         run: |

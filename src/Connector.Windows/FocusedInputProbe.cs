@@ -35,8 +35,7 @@ public static class FocusedInputProbe
 {
     private sealed record Wire(string Stage, NativeProbeResult? Result = null, int FocusPid = 0, string? Backend = null);
     private sealed record Recovery(string Stage, int FocusPid, string? Backend, DateTimeOffset CreatedAt);
-    private sealed record Focus(nint Window, nint EditWindow, int ProcessId, AutomationElement? Element,
-        string? Original, int Caret, string Backend);
+    private sealed record Focus(nint Window, nint EditWindow, int ProcessId, string Backend, FocusIdentity Identity);
 
     public static async Task<NativeProbeResult> InsertAsync(string text, string recoveryPath, CancellationToken ct, bool autoEnter = false)
     {
@@ -219,8 +218,8 @@ public static class FocusedInputProbe
         }
         if (isPassword) throw new ProbeRefusal("密码框已跳过自动输入。");
 
-        var bound = nativeEdit != 0 && Native.GetAncestor(nativeEdit, 2) == window;
-        if (!bound && element is not null)
+        var bound = element is null && nativeEdit != 0 && Native.GetAncestor(nativeEdit, 2) == window;
+        if (element is not null)
         {
             var root = AutomationElement.FromHandle(window);
             var candidate = element;
@@ -252,32 +251,15 @@ public static class FocusedInputProbe
 
         if (!ProbePolicies.CanInsert(observation)) throw new ProbeRefusal("当前控件、选区、权限或输入状态不符合输入条件。");
 
-        return new(window, nativeEdit, focusPid, element, null, 0,
-            direct ? "EditMessage" : "Unicode");
+        return new(window, nativeEdit, focusPid, direct ? "EditMessage" : "Unicode",
+            new((long)window, focusPid, (long)nativeEdit, element?.GetRuntimeId()));
     }
 
     private static void VerifyFocus(Focus before, int originPid)
     {
         var now = CaptureFocus(originPid);
-        if (now.Window != before.Window || now.ProcessId != before.ProcessId)
-            throw new ProbeRefusal("焦点窗口已经变化，未继续输入。");
-        if (before.EditWindow != 0 && now.EditWindow != 0 && now.EditWindow != before.EditWindow)
-            throw new ProbeRefusal("焦点控件已经变化，未继续输入。");
-        if (before.Element is not null && now.Element is not null)
-        {
-            try
-            {
-                if (!Automation.Compare(now.Element, before.Element))
-                    throw new ProbeRefusal("焦点控件已经变化，未继续输入。");
-            }
-            catch (ProbeRefusal) { throw; }
-            catch (Exception) { throw new ProbeRefusal("无法确认焦点控件未变化。", "focus_changed"); }
-        }
-        if (before.Original is not null && now.Original is not null)
-        {
-            if (now.Caret != before.Caret || now.Original != before.Original)
-                throw new ProbeRefusal("文档已经变化，未继续输入。");
-        }
+        if (!ProbePolicies.IsSameFocus(before.Identity, now.Identity))
+            throw new ProbeRefusal("焦点窗口或控件已经变化，未继续输入。", "focus_changed");
     }
     private static bool ModifiersDown() => new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C }.Any(k => (Native.GetAsyncKeyState(k) & 0x8000) != 0);
     private static bool ImeComposing(nint window)

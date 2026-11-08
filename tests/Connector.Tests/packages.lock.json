@@ -99,9 +99,10 @@
       "connector.wechat": {
         "type": "Project",
         "dependencies": {
-          "Connector.Core": "[1.0.0, )"
+          "Connector.Core": "[0.2.0, )"
         }
       }
-    }
+    },
+    "net10.0/win-x64": {}
   }
 }

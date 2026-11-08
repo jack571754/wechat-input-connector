@@ -7,6 +7,16 @@ namespace Connector.Windows.Tests;
 public sealed class InputBoundaryTests
 {
     [Fact]
+    public void FocusIdentityRejectsChangedOrMissingControlEvenInsideSameWindow()
+    {
+        var before = new FocusIdentity(10, 20, 30, [1, 2]);
+        Assert.True(ProbePolicies.IsSameFocus(before, new(10, 20, 30, [1, 2])));
+        Assert.False(ProbePolicies.IsSameFocus(before, new(10, 20, 30, [1, 3])));
+        Assert.False(ProbePolicies.IsSameFocus(before, new(10, 20, 0, [1, 2])));
+        Assert.False(ProbePolicies.IsSameFocus(before, new(10, 20, 30, null)));
+        Assert.False(ProbePolicies.IsSameFocus(before, new(11, 20, 30, [1, 2])));
+    }
+    [Fact]
     public void NativeSuccessMapsToSuccessWithoutInventingFailure()
     {
         var result = new NativeProbeResult("Dispatched", "已派发", "Untouched");
