@@ -6,6 +6,16 @@ namespace Connector.Windows.Tests;
 public sealed class InputRecoveryTests
 {
     [Fact]
+    public void MetadataArchivesRemainBoundedWithoutChangingOtherFiles()
+    {
+        var directory = Path.Combine(AppContext.BaseDirectory, "TestResults", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
+        var record = Path.Combine(directory, "input-recovery.dpapi");
+        File.WriteAllText(Path.Combine(directory, "preserve.txt"), "keep");
+        for (var i = 0; i < 25; i++) { File.WriteAllBytes(record, [1, 2, 3]); InputRecovery.ArchiveUncertain(record); }
+        Assert.InRange(Directory.GetFiles(directory, "*.archived.dpapi").Length, 1, 20);
+        Assert.Equal("keep", File.ReadAllText(Path.Combine(directory, "preserve.txt")));
+    }
+    [Fact]
     public void UncertainMetadataIsArchivedWithoutDeletingClipboardRecovery()
     {
         var directory = Path.Combine(Path.GetTempPath(), "wic-recovery-" + Guid.NewGuid()); Directory.CreateDirectory(directory);

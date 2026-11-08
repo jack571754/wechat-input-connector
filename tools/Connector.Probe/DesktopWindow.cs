@@ -46,6 +46,15 @@ internal sealed class DesktopWindow : Window
         Action<bool> input, Action<bool> enter, Action<bool> topmost, Action reconnect, UIElement connectionUI)
     {
         _read = read; _settings = settings;
+        var visual = new DrawingVisual();
+        using (var drawing = visual.RenderOpen())
+        {
+            drawing.DrawEllipse(new SolidColorBrush(Color.FromRgb(7, 193, 96)), null, new System.Windows.Point(16, 16), 14, 14);
+            drawing.DrawLine(new System.Windows.Media.Pen(Brushes.White, 2), new System.Windows.Point(10, 13), new System.Windows.Point(22, 13));
+            drawing.DrawLine(new System.Windows.Media.Pen(Brushes.White, 2), new System.Windows.Point(10, 19), new System.Windows.Point(18, 19));
+        }
+        var icon = new System.Windows.Media.Imaging.RenderTargetBitmap(32, 32, 96, 96, PixelFormats.Pbgra32);
+        icon.Render(visual); icon.Freeze(); Icon = icon;
         Title = "微信输入连接器"; Width = 860; Height = 560; MinWidth = 680; MinHeight = 420;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = new SolidColorBrush(Color.FromRgb(245, 246, 247));

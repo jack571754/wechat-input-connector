@@ -94,10 +94,11 @@ public sealed class ReceiptCoordinator
                 if (item.ReasonCode == "bot_echo" || item.Reply is not null && (!IdentityMatches(item.Reply) || item.Reply.SourceMessageId != item.StorageKey)
                     || item.Event is not null && (item.Event.AccountId != _identity.BotId || item.Event.SenderId != _identity.OwnerId)) continue;
                 if (!keys.Add(item.StorageKey)) continue;
+                if (item.Reply?.ContextToken.Length > 16384) item = item with { Reply = null };
                 item = item with { ObservedAt = item.ObservedAt ?? item.Event?.ReceivedAt ?? item.Reply?.ReceivedAt ?? Now,
                     Identity = item.Event is not null || item.Reply is not null ? _identity : item.Identity };
                 var inboxFull = item.Event is not null && item.Event.Text.Trim() != "/状态"
-                    && next.Events.Count(InboxRetention.IsActive) >= 1000;
+                    && !InboxRetention.CanAccept(next, item);
                 if (inboxFull) item = item with { State = EventState.Rejected, ReasonCode = "inbox_full", Failure = InputFailure.InboxFull };
                 next = next with { Events = next.Events.Append(item).ToArray(), Connected = true };
                 if (Fresh(item.Reply)) next = next with { LastContext = item.Reply };
@@ -152,7 +153,8 @@ public sealed class ReceiptCoordinator
                 outcome = new(EventState.Uncertain, InputFailure.Uncertain);
             lock (_sync)
             {
-                item = item with { State = outcome.State, ReasonCode = outcome.State == EventState.Queued ? "ready" : outcome.State.ToString(), Failure = outcome.Failure };
+                item = item with { State = outcome.State, ReasonCode = outcome.State == EventState.Queued ? "ready" : outcome.State.ToString(),
+                    Failure = outcome.State is EventState.Dispatched or EventState.Verified ? null : outcome.Failure };
                 var next = Replace(_state, item);
                 Commit(ReceiptFor(next, item, outcome));
             }

@@ -9,7 +9,23 @@ using System.Windows.Automation.Text;
 
 namespace Connector.Windows;
 
-public sealed record NativeProbeResult(string State, string Reason, string Clipboard, string? Backend = null, string? FailureCode = null);
+public sealed record NativeProbeResult(string State, string Reason, string Clipboard, string? Backend = null, string? FailureCode = null)
+{
+    public Connector.Core.InputOutcome ToOutcome()
+    {
+        var state = Enum.TryParse<Connector.Core.EventState>(State, out var parsed) ? parsed : Connector.Core.EventState.Uncertain;
+        var failure = state is Connector.Core.EventState.Dispatched or Connector.Core.EventState.Verified ? Connector.Core.InputFailure.NoInput
+            : state == Connector.Core.EventState.Uncertain ? Connector.Core.InputFailure.Uncertain : FailureCode switch
+            {
+                "focus_changed" => Connector.Core.InputFailure.FocusChanged,
+                "multiline_unsupported" => Connector.Core.InputFailure.MultilineUnsupported,
+                "timeout" => Connector.Core.InputFailure.Timeout,
+                "storage" => Connector.Core.InputFailure.StorageFailure,
+                _ => Connector.Core.InputFailure.TargetUnavailable
+            };
+        return new(state, failure);
+    }
+}
 public sealed record NativeProbeRequest(string Text, int OriginProcessId, bool AutoEnter = false, long TargetWindow = 0, int TargetProcessId = 0)
 {
     public override string ToString() => "输入请求（正文已隐藏）";

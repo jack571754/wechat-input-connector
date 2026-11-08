@@ -7,6 +7,13 @@ namespace Connector.Windows.Tests;
 public sealed class InputBoundaryTests
 {
     [Fact]
+    public void NativeSuccessMapsToSuccessWithoutInventingFailure()
+    {
+        var result = new NativeProbeResult("Dispatched", "已派发", "Untouched");
+        Assert.Equal(Connector.Core.EventState.Dispatched, result.ToOutcome().State);
+        Assert.Equal(Connector.Core.InputFailure.NoInput, result.ToOutcome().Failure);
+    }
+    [Fact]
     public void MereFocusableElementIsNotAnEditableTarget()
     {
         Assert.False(ProbePolicies.IsEditableTarget(false, false, false));

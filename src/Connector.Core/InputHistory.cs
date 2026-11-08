@@ -9,7 +9,7 @@ public static class InputHistory
             (x.Event is { } e ? e.AccountId == identity.BotId && e.SenderId == identity.OwnerId
                 : x.State == EventState.NeedsTranscript && x.Identity == identity))
         .Reverse().Select(x => new HistoryEntry(x.StorageKey, x.Event?.ReceivedAt ?? x.ObservedAt,
-            x.Event?.Text ?? "未收到语音转写文字", Describe(x.State), x.Failure is { } failure ? ReceiptFormatter.Failure(failure) : ""))
+            x.Event?.Text ?? "未收到语音转写文字", Describe(x.State), x.State is not (EventState.Dispatched or EventState.Verified) && x.Failure is { } failure ? ReceiptFormatter.Failure(failure) : ""))
         .ToArray();
 
     public static string Describe(EventState state) => state switch

@@ -24,15 +24,29 @@ public static class DataDirectory
     {
         source = Path.GetFullPath(source); target = Path.GetFullPath(target);
         if (source.Equals(target, StringComparison.OrdinalIgnoreCase)) return;
-        if (File.Exists(Path.Combine(target, "probe-state.dpapi"))) throw new IOException("目标目录已有微信身份，禁止覆盖迁移。");
+        var marker = Path.Combine(target, "migration-incomplete");
+        if (File.Exists(Path.Combine(target, "probe-state.dpapi")) && !File.Exists(marker)) throw new IOException("目标目录已有微信身份，禁止覆盖迁移。");
         if ((File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0) throw new IOException("迁移源不允许使用链接。");
         EnsurePrivate(target);
-        foreach (var name in new[] { "probe-state.dpapi", "settings.json", "clipboard-recovery.dpapi", "input-recovery.dpapi" })
+        File.WriteAllText(marker, "1");
+        var staging = Path.Combine(target, "migration.pending");
+        Directory.CreateDirectory(staging);
+        var names = new List<string>();
+        foreach (var name in new[] { "settings.json", "clipboard-recovery.dpapi", "input-recovery.dpapi", "probe-state.dpapi" })
         {
             var path = Path.Combine(source, name);
             if (!File.Exists(path)) continue;
             if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new IOException("迁移文件不允许使用链接。");
-            File.Copy(path, Path.Combine(target, name), false);
+            File.Copy(path, Path.Combine(staging, name), true); names.Add(name);
         }
+        if (!names.Contains("probe-state.dpapi")) throw new IOException("迁移源缺少微信身份文件。");
+        foreach (var name in names) File.Move(Path.Combine(staging, name), Path.Combine(target, name), true);
+        File.Delete(marker);
+    }
+
+    public static void EnsureReady(string directory)
+    {
+        if (File.Exists(Path.Combine(directory, "migration-incomplete")))
+            throw new IOException("上次迁移未完成，请使用原迁移命令重试；未启动收发或输入。");
     }
 }

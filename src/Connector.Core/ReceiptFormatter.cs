@@ -28,6 +28,7 @@ public static class ReceiptFormatter
             InputFailure.Timeout => "输入准备超时",
             InputFailure.StorageFailure => "本地状态无法保存",
             InputFailure.InboxFull => "待输入记录已达到容量上限",
+            InputFailure.Uncertain => "本条结果不明，未重发",
             _ => "没有可用输入框"
     };
 

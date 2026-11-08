@@ -10,6 +10,10 @@ public static class InputRecovery
         var archived = recoveryPath + "." + Guid.NewGuid().ToString("N") + ".archived.dpapi";
         // 上条输入已由协调器记为结果不明；保留阶段记录，但不再阻塞下一条输入。
         File.Move(recoveryPath, archived);
+        File.SetLastWriteTimeUtc(archived, DateTime.UtcNow);
+        foreach (var old in new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(recoveryPath))!)
+            .EnumerateFiles(Path.GetFileName(recoveryPath) + ".*.archived.dpapi").OrderByDescending(x => x.LastWriteTimeUtc).Skip(20))
+            old.Delete();
         return archived;
     }
 

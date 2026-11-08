@@ -19,11 +19,18 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args.Contains("--input-helper")) { FocusedInputProbe.RunHelper(); return; }
+        if (!ApplicationInstance.Run("Local\\WeChatInputConnector.P0", () => RunApplication(args)))
+            Forms.MessageBox.Show("微信输入连接器已在运行，请查看桌面顶部或系统托盘。", "微信连接器");
+    }
+
+    private static void RunApplication(string[] args)
+    {
         string? directory = null;
         try
         {
-            if (args.Contains("--input-helper")) { FocusedInputProbe.RunHelper(); return; }
             directory = ResolveDataDirectory(args);
+            DataDirectory.EnsureReady(directory);
             Directory.CreateDirectory(directory);
             AppendLog(directory, "trace.log", "启动");
             if (args.Contains("--insert-probe"))
@@ -33,9 +40,6 @@ internal static class Program
                 File.WriteAllText(Path.Combine(directory, "native-input-result.json"), JsonSerializer.Serialize(result));
                 return;
             }
-            using var single = new Mutex(true, "Local\\WeChatInputConnector.P0", out var first);
-            AppendLog(directory, "trace.log", $"单实例={first}");
-            if (!first) { Forms.MessageBox.Show("微信输入连接器已在运行，请查看桌面顶部或右下角系统托盘。", "微信连接器"); return; }
             using var tray = new TrayManager();
             var app = new System.Windows.Application();
             app.DispatcherUnhandledException += (s, e) =>

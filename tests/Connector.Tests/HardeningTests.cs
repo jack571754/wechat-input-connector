@@ -5,6 +5,28 @@ namespace Connector.Tests;
 
 public sealed class HardeningTests
 {
+    [Fact]
+    public void MixedLargeChineseRecordsCannotPoisonNextCommit()
+    {
+        var text = new string('字', 10000);
+        var records = Enumerable.Range(0, 524).Select(i => Item("done" + i, text: text))
+            .Concat(Enumerable.Range(0, 600).Select(i => Item("pending" + i, EventState.Queued, text))).ToArray();
+        var c = new ReceiptCoordinator(new(null, records, []), Identity, state =>
+            Assert.True(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(state,
+                new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }).Length < 32 * 1024 * 1024));
+        Assert.Equal(600, c.Snapshot.Events.Count(x => x.State == EventState.Queued));
+        c.CommitBatch("next", [Item("overflow", EventState.Queued)]);
+        Assert.Equal(EventState.Rejected, c.Snapshot.Events.Single(x => x.StorageKey == "overflow").State);
+    }
+
+    [Fact]
+    public async Task SuccessfulDispatchNeverDisplaysAnUnavailableTargetReason()
+    {
+        var c = new ReceiptCoordinator(new(null, [Item("a", EventState.Queued)], []), Identity, _ => { });
+        await c.ProcessAsync("a", (_, _) => Task.FromResult(new InputOutcome(EventState.Dispatched)), false, default);
+        Assert.Null(c.Snapshot.Events.Single().Failure);
+        Assert.Equal("", InputHistory.Read(c.Snapshot, Identity).Single().Detail);
+    }
     private static readonly BoundIdentity Identity = new("bot", "owner");
     private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
     private static InboxItem Item(string id, EventState state = EventState.Dispatched, string text = "完整正文")

@@ -129,15 +129,7 @@ internal sealed class ReceiptSession
     {
         ct.ThrowIfCancellationRequested();
         var result = await FocusedInputProbe.InsertAsync(item.Text, Path.Combine(_directory, "input-recovery.dpapi"), ct, Coordinator.Snapshot.AutoEnter);
-        var failure = result.FailureCode switch
-        {
-            "focus_changed" => InputFailure.FocusChanged,
-            "multiline_unsupported" => InputFailure.MultilineUnsupported,
-            "timeout" => InputFailure.Timeout,
-            "storage" => InputFailure.StorageFailure,
-            _ => result.State == "Uncertain" ? InputFailure.Uncertain : InputFailure.TargetUnavailable
-        };
-        return new(Enum.TryParse<EventState>(result.State, out var state) ? state : EventState.Uncertain, failure);
+        return result.ToOutcome();
     }
     private void ReportInput(string key)
     {
