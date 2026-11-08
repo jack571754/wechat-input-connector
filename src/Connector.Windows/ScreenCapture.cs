@@ -1,21 +1,32 @@
+using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
-using System.Windows.Forms;
+using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace Connector.Windows;
 
 public static class ScreenCapture
 {
+    private const int SmCxScreen = 0;
+    private const int SmCyScreen = 1;
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
+
     public static byte[] CapturePrimaryScreenToJpeg(int quality = 80)
     {
         quality = Math.Clamp(quality, 1, 100);
 
-        var bounds = Screen.PrimaryScreen?.Bounds ?? SystemInformation.VirtualScreen;
-        if (bounds.Width <= 0 || bounds.Height <= 0)
+        var width = GetSystemMetrics(SmCxScreen);
+        var height = GetSystemMetrics(SmCyScreen);
+        if (width <= 0 || height <= 0)
         {
-            bounds = new Rectangle(0, 0, 1920, 1080);
+            width = 1920;
+            height = 1080;
         }
+        var bounds = new Rectangle(0, 0, width, height);
 
         using var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
         using (var graphics = Graphics.FromImage(bitmap))

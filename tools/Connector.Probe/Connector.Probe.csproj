@@ -5,6 +5,31 @@
     <UseWindowsForms>true</UseWindowsForms>
     <UseWPF>true</UseWPF>
   </PropertyGroup>
+
+  <!-- Release Publish Optimization Profile: 裁剪、去符号与组件瘦身 -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishTrimmed Condition="'$(PublishTrimmed)' == ''">true</PublishTrimmed>
+    <TrimMode Condition="'$(TrimMode)' == ''">partial</TrimMode>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+    <_SuppressWinFormsTrimError>true</_SuppressWinFormsTrimError>
+    <_SuppressWpfTrimError>true</_SuppressWpfTrimError>
+    <DebugType Condition="'$(DebugType)' == ''">none</DebugType>
+    <DebugSymbols Condition="'$(DebugType)' == 'none'">false</DebugSymbols>
+    <EventSourceSupport>false</EventSourceSupport>
+    <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <NoWarn>$(NoWarn);IL2026;IL3000</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <TrimmerRootAssembly Include="System.Private.CoreLib" />
+    <TrimmerRootAssembly Include="WindowsBase" />
+    <TrimmerRootAssembly Include="PresentationCore" />
+    <TrimmerRootAssembly Include="PresentationFramework" />
+    <TrimmerRootAssembly Include="System.Windows.Forms" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="../../src/Connector.WeChat/Connector.WeChat.csproj" />
     <ProjectReference Include="../../src/Connector.Windows/Connector.Windows.csproj" />

@@ -47,12 +47,12 @@ internal static class Program
             Wpf.Ui.Appearance.ApplicationThemeManager.Apply(Wpf.Ui.Appearance.ApplicationTheme.Light);
             app.DispatcherUnhandledException += (s, e) =>
             {
-                AppendLog(directory, "crash.log", e.Exception.GetType().Name);
+                AppendLog(directory, "crash.log", e.Exception.ToString());
                 e.Handled = false;
             };
             AppDomain.CurrentDomain.UnhandledException += (s, e) =>
             {
-                AppendLog(directory, "crash.log", e.ExceptionObject?.GetType().Name ?? "Unknown");
+                AppendLog(directory, "crash.log", e.ExceptionObject?.ToString() ?? "Unknown");
             };
             app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
             var window = new PillWindow(directory, tray);
@@ -63,7 +63,7 @@ internal static class Program
         catch (Exception ex)
         {
             var targetDir = directory ?? AppContext.BaseDirectory;
-            AppendLog(targetDir, "crash.log", ex.GetType().Name);
+            AppendLog(targetDir, "crash.log", ex.ToString());
         }
     }
 
