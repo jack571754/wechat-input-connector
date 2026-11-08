@@ -49,6 +49,7 @@ internal static class Program
             };
             app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
             var window = new PillWindow(directory, tray);
+            if (args.Contains("--show-history")) window.Loaded += (_, _) => window.OpenDesktop();
             window.Show();
             app.Run(window);
         }

@@ -1,5 +1,5 @@
 @echo off
 title 微信输入连接器
 cd /d "%~dp0"
-start "" "%~dp0artifacts\simple-input\Connector.Probe.exe" --data-dir "%~dp0.local"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start.ps1"
 exit

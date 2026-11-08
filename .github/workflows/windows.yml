@@ -1,0 +1,26 @@
+name: Windows validation
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore locked dependencies
+        run: dotnet restore WeChatInputConnector.sln --locked-mode
+      - name: Audit dependencies
+        shell: pwsh
+        run: |
+          dotnet list WeChatInputConnector.sln package --vulnerable --include-transitive --format json | Out-File audit.json -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $audit = Get-Content audit.json -Raw | ConvertFrom-Json
+          $findings = @($audit.projects.frameworks | ForEach-Object { @($_.topLevelPackages) + @($_.transitivePackages) } | Where-Object { $_.vulnerabilities })
+          if ($findings.Count -gt 0) { throw 'Dependency vulnerabilities found; inspect audit.json.' }
+      - name: Test
+        run: dotnet test WeChatInputConnector.sln -c Release --no-restore
+      - name: Build
+        run: dotnet build WeChatInputConnector.sln -c Release --no-restore -p:ContinuousIntegrationBuild=true

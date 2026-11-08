@@ -387,6 +387,8 @@ internal sealed class PillWindow : Window
         _cardBorder.CornerRadius = new CornerRadius(19); ClampPosition();
     }
 
+    public void OpenDesktop() => ShowDesktop(false);
+
     private void ShowDesktop(bool settings)
     {
         if (_desktopWindow is null)
