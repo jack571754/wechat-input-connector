@@ -33,63 +33,6 @@ public static class FocusedInputProbe
         return await InsertViaHelperAsync(text, recoveryPath, autoEnter, ct);
     }
 
-    public static NativeProbeResult ExecuteDirect(string text, int originPid = 0, bool autoEnter = false)
-    {
-        if (!ProbePolicies.IsSafeText(text)) return new("Queued", "文字不符合自动输入条件。", "Untouched");
-        var dispatched = false;
-        try
-        {
-            var effectiveOrigin = originPid == 0 ? Environment.ProcessId : originPid;
-            var focus = CaptureFocus(effectiveOrigin);
-            if (focus.Backend == "Unicode" && !ProbePolicies.CanUseUnicode(text))
-                throw new ProbeRefusal("当前输入框不支持安全插入换行或制表符，内容已保留。", "multiline_unsupported");
-            if (text.Length > 10000)
-                throw new ProbeRefusal("文本超出长度限制，已保留在队列。");
-            VerifyFocus(focus, effectiveOrigin);
-            if (focus.Backend == "EditMessage")
-            {
-                dispatched = true;
-                if (Native.SendMessageTimeoutW(focus.EditWindow, 0x00C2, 1, text, 0x23, 500, out _) == 0)
-                    throw new IOException();
-            }
-            else
-            {
-                var inputList = new List<Native.Input>();
-                foreach (var c in text)
-                {
-                    inputList.Add(Native.Unicode(c, false));
-                    inputList.Add(Native.Unicode(c, true));
-                }
-                dispatched = true;
-                var keys = inputList.ToArray();
-                if (Native.SendInput((uint)keys.Length, keys, Marshal.SizeOf<Native.Input>()) != keys.Length) throw new IOException();
-            }
-
-            if (autoEnter)
-            {
-                VerifyFocus(focus, effectiveOrigin);
-                var enter = new[] { Native.Key(0x0D), Native.Key(0x0D, 2) };
-                if (Native.SendInput(2, enter, Marshal.SizeOf<Native.Input>()) != 2) throw new IOException();
-            }
-
-            if (Native.GetForegroundWindow() == focus.Window)
-                return new("Dispatched", "已派发到当前输入框。", "Untouched", focus.Backend);
-
-            return new("Uncertain", "已派发，但目标窗口发生切换；本条不再重发。", "Untouched", focus.Backend);
-        }
-        catch (ProbeRefusal error)
-        {
-            var copied = !dispatched && ClipboardFallback.CopyText(text);
-            return new(dispatched ? "Uncertain" : "Queued", error.Message, copied ? "Copied" : "Untouched", FailureCode: error.Code);
-        }
-        catch (Exception error) when (error is IOException or InvalidOperationException or ElementNotAvailableException
-            or UnauthorizedAccessException or System.ComponentModel.Win32Exception or COMException or JsonException or ArgumentException)
-        {
-            var copied = !dispatched && ClipboardFallback.CopyText(text);
-            return new(dispatched ? "Uncertain" : "Queued", "Windows 焦点检查或输入未完成，已停止本次操作。", copied ? "Copied" : "Untouched");
-        }
-    }
-
     private static async Task<NativeProbeResult> InsertViaHelperAsync(string text, string recoveryPath, bool autoEnter, CancellationToken ct)
     {
         var prepared = false;
@@ -131,9 +74,8 @@ public static class FocusedInputProbe
         catch (Exception error) when (error is IOException or TimeoutException or JsonException or OperationCanceledException
             or System.ComponentModel.Win32Exception or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
         {
-            var copied = !prepared && ClipboardFallback.CopyText(text);
             return prepared ? new("Uncertain", "输入结果不明，已保留恢复记录，本条不再重发。", "Untouched")
-                : new("Queued", "焦点探测未完成，未执行输入。", copied ? "Copied" : "Untouched", FailureCode:
+                : new("Queued", "焦点探测未完成，未执行输入。", "Untouched", FailureCode:
                     error is TimeoutException ? "timeout" : error is System.Security.Cryptography.CryptographicException ? "storage" : "target_unavailable");
         }
     }
@@ -158,11 +100,10 @@ public static class FocusedInputProbe
         Console.InputEncoding = new UTF8Encoding(false);
         Console.OutputEncoding = new UTF8Encoding(false);
         var dispatched = false;
-        NativeProbeRequest? request = null;
         try
         {
             Send(new("ready"));
-            request = JsonSerializer.Deserialize<NativeProbeRequest>(Console.ReadLine() ?? "") ?? throw new InvalidDataException();
+            var request = JsonSerializer.Deserialize<NativeProbeRequest>(Console.ReadLine() ?? "") ?? throw new InvalidDataException();
             if (!ProbePolicies.IsSafeText(request.Text)) throw new ProbeRefusal("文字不符合输入条件。");
             var focus = CaptureFocus(request.OriginProcessId);
             if (request.TargetWindow != 0 && ((long)focus.Window != request.TargetWindow
@@ -209,17 +150,10 @@ public static class FocusedInputProbe
 
             Send(new("done", new("Uncertain", "已派发，但目标窗口发生切换；本条不再重发。", "Untouched", focus.Backend)));
         }
-        catch (ProbeRefusal error)
-        {
-            var copied = !dispatched && request is not null && ClipboardFallback.CopyText(request.Text);
-            Send(new("done", new(dispatched ? "Uncertain" : "Queued", error.Message, copied ? "Copied" : "Untouched", FailureCode: error.Code)));
-        }
+        catch (ProbeRefusal error) { Send(new("done", new(dispatched ? "Uncertain" : "Queued", error.Message, "Untouched", FailureCode: error.Code))); }
         catch (Exception error) when (error is IOException or InvalidOperationException or ElementNotAvailableException
             or UnauthorizedAccessException or System.ComponentModel.Win32Exception or COMException or JsonException or ArgumentException)
-        {
-            var copied = !dispatched && request is not null && ClipboardFallback.CopyText(request.Text);
-            Send(new("done", new(dispatched ? "Uncertain" : "Queued", "Windows 焦点检查或输入未完成，已停止本次操作。", copied ? "Copied" : "Untouched")));
-        }
+        { Send(new("done", new(dispatched ? "Uncertain" : "Queued", "Windows 焦点检查或输入未完成，已停止本次操作。", "Untouched"))); }
     }
 
     private static Focus CaptureFocus(int originPid)
