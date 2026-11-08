@@ -71,6 +71,7 @@ internal sealed class PillWindow : Window
     private readonly Button _minimizeBtn;
     private readonly Border _drawer;
     private readonly System.Windows.Controls.Image _qrImage;
+    private readonly Grid _verifyRow;
     private readonly System.Windows.Controls.TextBox _verifyBox;
     private readonly Button _verifySubmitBtn;
     private readonly TextBlock _drawerHint;
@@ -222,74 +223,112 @@ internal sealed class PillWindow : Window
         _drawer = new Border
         {
             Visibility = Visibility.Collapsed,
-            Padding = new Thickness(16, 8, 16, 16),
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255))
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(226, 232, 240)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(16),
+            Margin = new Thickness(0, 6, 0, 10),
+            HorizontalAlignment = HAlign.Center,
+            SnapsToDevicePixels = true,
+            UseLayoutRounding = true
         };
 
-        var drawerStack = new StackPanel { HorizontalAlignment = HAlign.Center };
+        var drawerStack = new StackPanel
+        {
+            HorizontalAlignment = HAlign.Center,
+            Width = 264
+        };
+
+        var qrFrame = new Border
+        {
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(241, 245, 249)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(12),
+            HorizontalAlignment = HAlign.Center
+        };
 
         _qrImage = new System.Windows.Controls.Image
         {
-            Width = 190,
-            Height = 190,
-            Margin = new Thickness(0, 8, 0, 8)
+            Width = 240,
+            Height = 240,
+            Stretch = Stretch.Uniform,
+            SnapsToDevicePixels = true,
+            UseLayoutRounding = true
         };
-        RenderOptions.SetBitmapScalingMode(_qrImage, BitmapScalingMode.HighQuality);
-        drawerStack.Children.Add(_qrImage);
+        RenderOptions.SetBitmapScalingMode(_qrImage, BitmapScalingMode.NearestNeighbor);
+        RenderOptions.SetEdgeMode(_qrImage, EdgeMode.Aliased);
+        qrFrame.Child = _qrImage;
+        drawerStack.Children.Add(qrFrame);
 
         _drawerHint = new TextBlock
         {
-            Text = "请使用手机微信扫描二维码绑定",
-            Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 185)),
-            FontSize = 11.5,
+            Text = "📱 请使用手机微信 [扫一扫] 扫描二维码",
+            Foreground = new SolidColorBrush(Color.FromRgb(15, 23, 42)),
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
             HorizontalAlignment = HAlign.Center,
-            Margin = new Thickness(0, 0, 0, 8)
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 10, 0, 0)
         };
         drawerStack.Children.Add(_drawerHint);
 
-        var verifyRow = new Grid { Width = 230, Margin = new Thickness(0, 4, 0, 4) };
-        verifyRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        verifyRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _verifyRow = new Grid
+        {
+            Width = 240,
+            Margin = new Thickness(0, 10, 0, 0),
+            Visibility = Visibility.Collapsed
+        };
+        _verifyRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _verifyRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         _verifyBox = new System.Windows.Controls.TextBox
         {
-            Height = 28,
-            FontSize = 12,
+            Height = 32,
+            FontSize = 13,
             VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HAlign.Center,
             Padding = new Thickness(6, 0, 6, 0),
-            Background = new SolidColorBrush(Color.FromRgb(40, 40, 44)),
-            Foreground = Brushes.White,
-            BorderBrush = BorderColor,
+            Background = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
+            Foreground = new SolidColorBrush(Color.FromRgb(15, 23, 42)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(203, 213, 225)),
             BorderThickness = new Thickness(1),
             IsEnabled = false
         };
         Grid.SetColumn(_verifyBox, 0);
-        verifyRow.Children.Add(_verifyBox);
+        _verifyRow.Children.Add(_verifyBox);
 
         _verifySubmitBtn = new Button
         {
             Content = "确认",
-            Width = 52,
-            Height = 28,
-            FontSize = 12,
+            Width = 56,
+            Height = 32,
+            FontSize = 12.5,
+            FontWeight = FontWeights.Medium,
             Margin = new Thickness(6, 0, 0, 0),
             Background = GreenBrush,
             Foreground = Brushes.White,
             BorderThickness = new Thickness(0),
+            Cursor = Cursors.Hand,
             IsEnabled = false
         };
-        _verifySubmitBtn.Click += (_, _) =>
+        void DoSubmitVerify()
         {
             if (_pendingCode?.TrySetResult(_verifyBox.Text.Trim()) == true)
             {
                 _verifyBox.Clear();
                 _verifyBox.IsEnabled = _verifySubmitBtn.IsEnabled = false;
+                _verifyRow.Visibility = Visibility.Collapsed;
             }
-        };
+        }
+        _verifySubmitBtn.Click += (_, _) => DoSubmitVerify();
+        _verifyBox.KeyDown += (_, e) => { if (e.Key == Key.Enter) DoSubmitVerify(); };
         Grid.SetColumn(_verifySubmitBtn, 1);
-        verifyRow.Children.Add(_verifySubmitBtn);
-        drawerStack.Children.Add(verifyRow);
+        _verifyRow.Children.Add(_verifySubmitBtn);
+        drawerStack.Children.Add(_verifyRow);
 
         _drawer.Child = drawerStack;
 
@@ -397,9 +436,13 @@ internal sealed class PillWindow : Window
             if (_drawer.Parent is System.Windows.Controls.Panel parent) parent.Children.Remove(_drawer);
             _desktopWindow = new DesktopWindow(
                 () => _state is null ? [] : InputHistory.Read(_live?.Coordinator.Snapshot ?? _state.ToRuntime(_autoInput, _autoEnter), new(_state.Account.BotId, _state.Account.OwnerId)),
-                () => (_autoInput, _autoEnter, Topmost, _statusText.Text), ApplyAutoInput, ApplyAutoEnter,
+                () => (_autoInput, _autoEnter, Topmost, _statusText.Text),
+                ApplyAutoInput,
+                ApplyAutoEnter,
                 value => { Topmost = value; _tray.TopmostEnabled = value; SaveSettings(); },
-                () => _ = ConnectAsync(forceLogin: true), _drawer);
+                () => _ = ConnectAsync(forceLogin: true),
+                _drawer,
+                () => _ = TriggerScreenshotAsync());
             _desktopWindow.Closed += (_, _) => _desktopWindow = null;
         }
         _desktopWindow.SelectPage(settings);
@@ -618,7 +661,7 @@ internal sealed class PillWindow : Window
         {
             if (progress.QrContent is not null)
             {
-                var png = PngByteQRCodeHelper.GetQRCode(progress.QrContent, QRCodeGenerator.ECCLevel.M, 10);
+                var png = PngByteQRCodeHelper.GetQRCode(progress.QrContent, QRCodeGenerator.ECCLevel.M, 8);
                 var imageSource = new BitmapImage();
                 using var ms = new MemoryStream(png);
                 imageSource.BeginInit();
@@ -631,14 +674,23 @@ internal sealed class PillWindow : Window
 
             _drawerHint.Text = progress.Status switch
             {
-                "qrcode" or "wait" => "请用手机微信扫描二维码",
-                "scaned" => "已扫码，请在手机上点击确认",
-                "need_verifycode" => "请输入手机上显示的验证码",
-                "scaned_but_redirect" => "正在切换登录节点…",
-                "confirmed" => "登录成功！",
-                "expired" => "二维码已过期，正在刷新…",
+                "qrcode" or "wait" => "📱 请用手机微信 [扫一扫] 扫描上方二维码",
+                "scaned" => "⏳ 已扫码，请在手机微信上点击确认",
+                "need_verifycode" => "🔢 请在下方输入手机微信显示的验证码",
+                "scaned_but_redirect" => "🔄 正在切换登录节点…",
+                "confirmed" => "🎉 登录成功！",
+                "expired" => "⚠️ 二维码已过期，正在刷新…",
                 _ => "正在连接微信…"
             };
+
+            if (progress.Status == "need_verifycode")
+            {
+                _verifyRow.Visibility = Visibility.Visible;
+            }
+            else if (progress.Status is "confirmed" or "expired")
+            {
+                _verifyRow.Visibility = Visibility.Collapsed;
+            }
         });
     }
 
@@ -648,6 +700,7 @@ internal sealed class PillWindow : Window
         Dispatcher.Invoke(() =>
         {
             _pendingCode = completion;
+            _verifyRow.Visibility = Visibility.Visible;
             _verifyBox.IsEnabled = _verifySubmitBtn.IsEnabled = true;
             _verifyBox.Focus();
         });
