@@ -9,5 +9,6 @@
     <ProjectReference Include="../../src/Connector.WeChat/Connector.WeChat.csproj" />
     <ProjectReference Include="../../src/Connector.Windows/Connector.Windows.csproj" />
     <PackageReference Include="QRCoder" />
+    <PackageReference Include="WPF-UI" />
   </ItemGroup>
 </Project>

@@ -42,6 +42,9 @@ internal static class Program
             }
             using var tray = new TrayManager();
             var app = new System.Windows.Application();
+            app.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ThemesDictionary());
+            app.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ControlsDictionary());
+            Wpf.Ui.Appearance.ApplicationThemeManager.Apply(Wpf.Ui.Appearance.ApplicationTheme.Light);
             app.DispatcherUnhandledException += (s, e) =>
             {
                 AppendLog(directory, "crash.log", e.Exception.GetType().Name);
