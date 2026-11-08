@@ -96,7 +96,9 @@ internal sealed class DesktopWindow : FluentWindow
         MinWidth = 860;
         MinHeight = 580;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        WindowBackdropType = WindowBackdropType.Mica;
+        ExtendsContentIntoTitleBar = false;
+        WindowBackdropType = WindowBackdropType.None;
+        Background = new SolidColorBrush(Color.FromRgb(248, 250, 252));
         FontFamily = new FontFamily("Microsoft YaHei UI, Segoe UI, sans-serif");
         FontSize = 14;
         SnapsToDevicePixels = true;

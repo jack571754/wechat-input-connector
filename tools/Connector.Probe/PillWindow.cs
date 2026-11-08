@@ -456,20 +456,39 @@ internal sealed class PillWindow : Window
     private void ShowMoreMenu(FrameworkElement target)
     {
         _collapseTimer.Stop();
-        var menu = new ContextMenu();
+        var menu = new ContextMenu
+        {
+            FontFamily = new FontFamily("Microsoft YaHei UI, Segoe UI, sans-serif"),
+            FontSize = 13.5,
+            Padding = new Thickness(4, 6, 4, 6)
+        };
+
+        // Header
+        var header = new MenuItem
+        {
+            Header = "微信输入连接器",
+            IsEnabled = false,
+            FontWeight = FontWeights.SemiBold,
+            Icon = new SymbolIcon { Symbol = SymbolRegular.Chat24, FontSize = 16, Foreground = GreenBrush },
+            Padding = new Thickness(8, 5, 14, 5)
+        };
+        menu.Items.Add(header);
+        menu.Items.Add(new Separator());
+
         void Add(string title, SymbolRegular symbol, Action action)
         {
             var item = new MenuItem
             {
                 Header = title,
-                Icon = new SymbolIcon { Symbol = symbol, FontSize = 16 }
+                Icon = new SymbolIcon { Symbol = symbol, FontSize = 16 },
+                Padding = new Thickness(8, 6, 14, 6)
             };
             item.Click += (_, _) => action();
             menu.Items.Add(item);
         }
-        Add("消息历史", SymbolRegular.History24, () => ShowDesktop(false));
+        Add("消息历史记录", SymbolRegular.History24, () => ShowDesktop(false));
         Add("截取屏幕发微信", SymbolRegular.Camera24, () => _ = TriggerScreenshotAsync());
-        Add("连接与设置", SymbolRegular.Settings24, () => ShowDesktop(true));
+        Add("连接与系统设置", SymbolRegular.Settings24, () => ShowDesktop(true));
         Add("隐藏悬浮窗", SymbolRegular.EyeOff24, Hide);
         menu.Items.Add(new Separator());
         Add("退出连接器", SymbolRegular.SignOut24, Close);
